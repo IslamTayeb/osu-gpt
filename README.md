@@ -1,36 +1,92 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# osu-gpt web MVP
 
-## Getting Started
+Simple v1 implementation of:
+- Spotify import (liked songs only)
+- osu! map lookup (Ranked/Loved, title+artist substring match)
+- Match-first flow with auto-generate fallback
+- spotdl default downloader (with one-time acknowledgment)
+- Mapperatorinator generation jobs (local + hosted AWS Batch)
+- Artifact download with 7-day expiration metadata
 
-First, run the development server:
+## Run
 
 ```bash
+cd web
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://127.0.0.1:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Required env (set in repo root `.env`)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+APP_SECRET=replace-with-long-random-string
+SPOTIFY_CLIENT_ID=...
+SPOTIFY_CLIENT_SECRET=...
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/callback
+```
 
-## Learn More
+## Optional env
 
-To learn more about Next.js, take a look at the following resources:
+```env
+OSU_CLIENT_ID=...      # optional now; required only if you switch to osu OAuth APIs
+OSU_CLIENT_SECRET=...  # optional now; required only if you switch to osu OAuth APIs
+OSU_API_KEY=...        # legacy key, optional and currently not used by default flow
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## API key setup (osu + AWS)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### osu API credentials
 
-## Deploy on Vercel
+Current matching uses osu beatmapset public search and does not strictly require a key.  
+If you want OAuth credentials ready for future/private endpoints:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Sign in to osu and open account settings OAuth section:
+   - https://osu.ppy.sh/home/account/edit#new-oauth-application
+2. Create a new OAuth application.
+3. Copy `Client ID` and `Client Secret`.
+4. Add them to `.env` as `OSU_CLIENT_ID` and `OSU_CLIENT_SECRET`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### AWS credentials for hosted runtime
+
+Hosted jobs require your own AWS Batch + S3 setup and session credentials entered in-app.
+
+1. Create IAM access keys (or STS temporary credentials):
+   - https://console.aws.amazon.com/iam/home#/security_credentials
+2. In AWS, prepare:
+   - Batch queue
+   - Batch job definition
+   - S3 bucket/prefix for artifacts
+   - (optional) CloudWatch log group
+3. In the app, switch runtime to `Hosted AWS runtime` and fill:
+   - Access Key ID
+   - Secret Access Key
+   - Session Token (optional)
+   - Region
+   - Batch Queue
+   - Batch Job Definition
+   - S3 Bucket / Prefix
+   - CloudWatch Log Group (optional)
+4. Click `Save AWS Session`.
+
+Credentials are stored as an encrypted, HTTP-only session cookie and are not written into `store.json`.
+
+## Runtime requirements
+
+Local generation needs:
+- `spotdl` installed and available on PATH
+- `python` available on PATH
+- `../Mapperatorinator` present and runnable
+
+Hosted generation needs:
+- AWS Batch queue + job definition that can run your generation worker
+- S3 bucket access for artifact upload/download
+- AWS credentials with Batch + S3 (+ optional CloudWatch Logs) permissions
+
+The app stores local state in `web/.data/store.json` and generated artifacts in `web/.data/artifacts/`.
+
+## Current v1 scope
+
+- Apple Music is deferred.
+- Hosted runtime assumes you already provisioned AWS infrastructure (the app does not provision it automatically).
