@@ -527,17 +527,13 @@ function cleanBoolean(value: unknown) {
 
 function cleanStringArray(value: unknown) {
   if (!Array.isArray(value)) return null;
-  const next = value
-    .map((item) => (typeof item === "string" ? item.trim() : ""))
-    .filter(Boolean);
+  const next = value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean);
   return next;
 }
 
 function cleanNumberArray(value: unknown) {
   if (!Array.isArray(value)) return null;
-  const next = value
-    .map((item) => cleanNumber(item))
-    .filter((item): item is number => item !== null);
+  const next = value.map((item) => cleanNumber(item)).filter((item): item is number => item !== null);
   return next.length ? next : [];
 }
 

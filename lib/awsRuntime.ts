@@ -189,7 +189,9 @@ export async function syncHostedAwsJobs(session: AwsRuntimeSession) {
     return;
   }
 
-  const batchIds = candidates.map((job) => job.hosted?.batchJobId).filter((jobId): jobId is string => Boolean(jobId));
+  const batchIds = candidates
+    .map((job) => job.hosted?.batchJobId)
+    .filter((jobId): jobId is string => Boolean(jobId));
   if (batchIds.length === 0) {
     return;
   }

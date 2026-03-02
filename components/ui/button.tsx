@@ -22,18 +22,12 @@ const buttonVariants = cva("ui-button", {
   },
 });
 
-export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
-  VariantProps<typeof buttonVariants>;
+export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof buttonVariants>;
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, type = "button", ...props }, ref) => {
     return (
-      <button
-        ref={ref}
-        type={type}
-        className={cn(buttonVariants({ variant, size }), className)}
-        {...props}
-      />
+      <button ref={ref} type={type} className={cn(buttonVariants({ variant, size }), className)} {...props} />
     );
   },
 );

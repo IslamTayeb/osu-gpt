@@ -54,7 +54,13 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-function runCommand(cmd: string, args: string[], cwd: string, timeoutMs: number, onLine: (line: string) => void) {
+function runCommand(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+  onLine: (line: string) => void,
+) {
   return withTimeout(
     new Promise<void>((resolve, reject) => {
       const proc = spawn(cmd, args, { cwd, env: process.env });

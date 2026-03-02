@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import {
   useCallback,
@@ -11,11 +10,10 @@ import {
   type ChangeEvent as ReactChangeEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   Calendar,
-  ChevronLeft,
-  ChevronRight,
   Circle,
   Cpu,
   Crosshair,
@@ -35,93 +33,39 @@ import {
 import type {
   GenerationJob,
   GeneratorParams,
-  MatchResult,
   SpotifyImportStatus,
   Track,
   TrackMatchSnapshot,
 } from "@/lib/types";
 import { buttonVariants, Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { generatorParamTemplate, mapTypePresets, mapperStylePresets } from "@/lib/generatorConfig";
-
-type HostedAwsSessionStatus = {
-  configured: boolean;
-  region?: string;
-  batchQueue?: string;
-  batchJobDefinition?: string;
-  s3Bucket?: string;
-  s3Prefix?: string;
-  cloudWatchLogGroup?: string | null;
-  gpuHint?: string;
-  gpuCountPerJob?: number;
-  accessKeyIdHint?: string;
-  profile?: string;
-  updatedAt?: string;
-};
-
-type OsuSessionStatus = {
-  configured: boolean;
-  clientIdHint?: string;
-  updatedAt?: string;
-  source?: "session" | "env";
-};
-
-type SessionResponse = {
-  spotifyConnected: boolean;
-  spotdlAcknowledgedAt: string | null;
-  providers?: {
-    spotify: { connected: boolean; available: boolean };
-    apple: { connected: boolean; available: boolean; comingSoon?: boolean };
-  };
-  runtime?: {
-    hostedAws?: HostedAwsSessionStatus;
-    osu?: OsuSessionStatus;
-  };
-  trackCount?: number;
-  importStatus?: SpotifyImportStatus;
-};
-
-type TrackMatchResultPayload = {
-  matches: MatchResult[];
-  topHit: MatchResult | null;
-  strongMatch: boolean;
-  autoGenerate: boolean;
-  error?: string;
-};
-
-type BatchMatchResponse = {
-  trackResults: Record<string, TrackMatchResultPayload>;
-  summary: {
-    total: number;
-    matchedCount: number;
-    unmatchedCount: number;
-    errorCount: number;
-  };
-};
-
-type TracksResponse = {
-  tracks?: Track[];
-  matchesByTrackId?: Record<string, TrackMatchSnapshot>;
-  totalTracks?: number;
-  pagination?: {
-    page: number;
-    pageSize: number;
-    total: number;
-    totalPages: number;
-    hasPrev: boolean;
-    hasNext: boolean;
-    start: number;
-    end: number;
-  };
-};
+import {
+  chunkArray,
+  descriptorOptions,
+  inferFilename,
+  inContextOptions,
+  matchMetaText,
+  negativeDescriptorOptions,
+  outputTypeOptions,
+} from "@/lib/homeUi";
+import { AuthShell } from "@/components/workspace/auth-shell";
+import { FiltersPane } from "@/components/workspace/filters-pane";
+import { LibraryPane } from "@/components/workspace/library-pane";
+import type {
+  BatchMatchResponse,
+  HostedAwsSessionStatus,
+  OsuSessionStatus,
+  SessionResponse,
+  TracksResponse,
+} from "@/lib/homeTypes";
 
 const defaultImportStatus: SpotifyImportStatus = { status: "idle" };
 
@@ -142,97 +86,9 @@ type LibraryMarqueeSession = {
   originY: number;
   moved: boolean;
   clickedTrackId: string | null;
+  additive: boolean;
+  baseSelectedIds: string[];
 };
-
-function msToClock(ms: number) {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function matchMetaText(match: MatchResult | null | undefined) {
-  if (!match) return "";
-  const meta: string[] = [];
-  if (typeof match.maxDifficultyRating === "number" && Number.isFinite(match.maxDifficultyRating)) {
-    meta.push(`${match.maxDifficultyRating.toFixed(2)}★`);
-  }
-  if (match.topDifficultyName) {
-    meta.push(match.topDifficultyName);
-  }
-  if (typeof match.bpm === "number" && Number.isFinite(match.bpm)) {
-    meta.push(`${Math.round(match.bpm)} BPM`);
-  }
-  return meta.join(" · ");
-}
-
-function importProgress(status: SpotifyImportStatus) {
-  if (status.status === "completed") return 100;
-  if (status.status === "running") {
-    const n = status.importedCount ?? 0;
-    return Math.max(6, Math.min(92, Math.round(24 + Math.log10(n + 1) * 28)));
-  }
-  return 0;
-}
-
-function inferFilename(header: string | null) {
-  if (!header) return "osu-gpt-export.zip";
-  const match = header.match(/filename="?([^"]+)"?/);
-  return match?.[1] ?? "osu-gpt-export.zip";
-}
-
-function chunkArray<T>(input: T[], size: number) {
-  const chunks: T[][] = [];
-  for (let i = 0; i < input.length; i += size) {
-    chunks.push(input.slice(i, i + size));
-  }
-  return chunks;
-}
-
-function librarySkeletonItems(count: number) {
-  return Array.from({ length: count }, (_, index) => index);
-}
-
-const descriptorOptions = [
-  "jump aim",
-  "high bpm",
-  "bursty",
-  "streams",
-  "stamina",
-  "flow aim",
-  "finger control",
-  "aim control",
-  "technical",
-  "alt",
-  "precision",
-  "clean",
-  "reading",
-  "difficulty spike",
-  "comfortable",
-  "distance snapped",
-  "old style",
-  "triples",
-  "close spacing",
-  "vocal rhythm",
-  "grid based",
-  "oibon",
-  "large jumps",
-  "side to side jumps",
-];
-
-const negativeDescriptorOptions = [
-  "slider spam",
-  "awkward jumps",
-  "visual clutter",
-  "rhythm gimmick",
-  "overmapped",
-  "underweighted patterns",
-  "unreadable spacing",
-  "excessive SV gimmick",
-];
-
-const inContextOptions = ["NONE", "GD", "NO_HS", "MAP", "TIMING"];
-const outputTypeOptions = ["MAP", "TIMING", "HITSOUND"];
 
 export default function Home() {
   const [spotifyConnected, setSpotifyConnected] = useState(false);
@@ -299,6 +155,7 @@ export default function Home() {
   const lastImportStateRef = useRef<SpotifyImportStatus["status"]>("idle");
   const libraryScrollRef = useRef<HTMLDivElement | null>(null);
   const libraryMarqueeRef = useRef<LibraryMarqueeSession | null>(null);
+  const selectionAnchorTrackIdRef = useRef<string | null>(null);
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null);
 
   const trackById = useMemo(() => {
@@ -339,7 +196,8 @@ export default function Home() {
   );
 
   const selectedStylePreset = useMemo(
-    () => stylePresetOptions.find((presetOption) => presetOption.id === stylePresetId) ?? stylePresetOptions[0],
+    () =>
+      stylePresetOptions.find((presetOption) => presetOption.id === stylePresetId) ?? stylePresetOptions[0],
     [stylePresetId, stylePresetOptions],
   );
 
@@ -414,7 +272,10 @@ export default function Home() {
           track: trackById.get(trackId),
           snapshot: matchSnapshots[trackId],
         }))
-        .filter((entry) => entry.track && entry.snapshot && entry.snapshot.matches.length === 0 && entry.snapshot.topHit),
+        .filter(
+          (entry) =>
+            entry.track && entry.snapshot && entry.snapshot.matches.length === 0 && entry.snapshot.topHit,
+        ),
     [selectedTrackIds, trackById, matchSnapshots],
   );
 
@@ -571,6 +432,30 @@ export default function Home() {
     });
   }, [tracks]);
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.tagName === "SELECT" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+      libraryMarqueeRef.current = null;
+      setSelectionRect(null);
+      clearSelection();
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const importSpotify = useCallback(
     async (silent = false) => {
       setBusy(true);
@@ -716,7 +601,7 @@ export default function Home() {
           cloudWatchLogGroup: awsCloudWatchLogGroup,
         }),
       });
-      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string };
+      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string; warning?: string };
       if (!response.ok) {
         throw new Error(body.error ?? "Failed to save AWS session.");
       }
@@ -727,7 +612,9 @@ export default function Home() {
       setNotice("Hosted AWS session saved.");
       await fetchSession();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save AWS session.");
+      const message = err instanceof Error ? err.message : "Failed to save AWS session.";
+      toast.error(message);
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -751,7 +638,7 @@ export default function Home() {
           cloudWatchLogGroup: awsCloudWatchLogGroup,
         }),
       });
-      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string };
+      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string; warning?: string };
       if (!response.ok) {
         throw new Error(body.error ?? "Failed to load AWS session from CLI.");
       }
@@ -766,10 +653,15 @@ export default function Home() {
       if (body.s3Bucket) setAwsS3Bucket(body.s3Bucket);
       if (body.s3Prefix) setAwsS3Prefix(body.s3Prefix);
       if (body.cloudWatchLogGroup) setAwsCloudWatchLogGroup(body.cloudWatchLogGroup);
-      setNotice(`Hosted AWS session loaded from AWS CLI profile ${(body.profile ?? awsProfile) || "default"}.`);
+      setNotice(
+        body.warning ??
+          `Hosted AWS session loaded from AWS CLI profile ${(body.profile ?? awsProfile) || "default"}.`,
+      );
       await fetchSession();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load AWS session from CLI.");
+      const message = err instanceof Error ? err.message : "Failed to load AWS session from CLI.";
+      toast.error(message);
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -793,7 +685,7 @@ export default function Home() {
           cloudWatchLogGroup: awsCloudWatchLogGroup,
         }),
       });
-      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string };
+      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string; warning?: string };
       if (!response.ok) {
         throw new Error(body.error ?? "Failed to auto-load AWS session.");
       }
@@ -808,10 +700,15 @@ export default function Home() {
       if (body.s3Bucket) setAwsS3Bucket(body.s3Bucket);
       if (body.s3Prefix) setAwsS3Prefix(body.s3Prefix);
       if (body.cloudWatchLogGroup) setAwsCloudWatchLogGroup(body.cloudWatchLogGroup);
-      setNotice(`Hosted AWS session auto-loaded via AWS SDK chain (${(body.profile ?? awsProfile) || "default"}).`);
+      setNotice(
+        body.warning ??
+          `Hosted AWS session auto-loaded via AWS SDK chain (${(body.profile ?? awsProfile) || "default"}).`,
+      );
       await fetchSession();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to auto-load AWS session.");
+      const message = err instanceof Error ? err.message : "Failed to auto-load AWS session.";
+      toast.error(message);
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -833,7 +730,47 @@ export default function Home() {
       setNotice("Hosted AWS session cleared.");
       await fetchSession();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not clear AWS session");
+      const message = err instanceof Error ? err.message : "Could not clear AWS session";
+      toast.error(message);
+      setError(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveAwsRuntimeResources() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/runtime/aws/session", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile: awsProfile,
+          region: awsRegion,
+          batchQueue: awsBatchQueue,
+          batchJobDefinition: awsBatchJobDefinition,
+          s3Bucket: awsS3Bucket,
+          s3Prefix: awsS3Prefix,
+          cloudWatchLogGroup: awsCloudWatchLogGroup,
+        }),
+      });
+      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string };
+      if (!response.ok) {
+        throw new Error(body.error ?? "Failed to save AWS resource settings.");
+      }
+      setAwsSessionStatus(body);
+      setNotice(
+        body.configured
+          ? "Hosted AWS session is fully configured."
+          : `Saved AWS settings. Missing: ${(body.missingFields ?? []).join(", ") || "none"}.`,
+      );
+      await fetchSession();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save AWS resource settings.";
+      toast.error(message);
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -857,12 +794,41 @@ export default function Home() {
   }
 
   function toggleTrack(trackId: string) {
+    selectionAnchorTrackIdRef.current = trackId;
     setSelectedTrackIds((previous) => {
       if (previous.includes(trackId)) {
         return previous.filter((id) => id !== trackId);
       }
       return [...previous, trackId];
     });
+  }
+
+  function addRangeSelection(trackId: string) {
+    const targetIndex = tracks.findIndex((track) => track.id === trackId);
+    if (targetIndex < 0) {
+      toggleTrack(trackId);
+      return;
+    }
+
+    const anchorTrackId = selectionAnchorTrackIdRef.current;
+    const anchorIndex = anchorTrackId ? tracks.findIndex((track) => track.id === anchorTrackId) : -1;
+
+    if (anchorIndex < 0) {
+      selectionAnchorTrackIdRef.current = trackId;
+      setSelectedTrackIds((previous) => {
+        if (previous.includes(trackId)) {
+          return previous;
+        }
+        return [...previous, trackId];
+      });
+      return;
+    }
+
+    const start = Math.min(anchorIndex, targetIndex);
+    const end = Math.max(anchorIndex, targetIndex);
+    const rangeIds = tracks.slice(start, end + 1).map((track) => track.id);
+    selectionAnchorTrackIdRef.current = trackId;
+    setSelectedTrackIds((previous) => Array.from(new Set([...previous, ...rangeIds])));
   }
 
   function selectPageTracks() {
@@ -876,6 +842,7 @@ export default function Home() {
   }
 
   function clearSelection() {
+    selectionAnchorTrackIdRef.current = null;
     setSelectedTrackIds([]);
   }
 
@@ -888,7 +855,12 @@ export default function Home() {
   }
 
   function intersectsRect(a: SelectionRect, b: SelectionRect) {
-    return a.left <= b.left + b.width && a.left + a.width >= b.left && a.top <= b.top + b.height && a.top + a.height >= b.top;
+    return (
+      a.left <= b.left + b.width &&
+      a.left + a.width >= b.left &&
+      a.top <= b.top + b.height &&
+      a.top + a.height >= b.top
+    );
   }
 
   function eventToLibraryPoint(event: ReactPointerEvent<HTMLDivElement>) {
@@ -949,6 +921,8 @@ export default function Home() {
       originY: point.y,
       moved: false,
       clickedTrackId: clickedCard?.dataset.trackId ?? null,
+      additive: event.shiftKey,
+      baseSelectedIds: event.shiftKey ? selectedTrackIds : [],
     };
     setSelectionRect({ left: point.x, top: point.y, width: 0, height: 0 });
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -971,7 +945,12 @@ export default function Home() {
     }
     setSelectionRect(rect);
     if (active.moved) {
-      setSelectedTrackIds(selectedIdsFromRect(rect));
+      const rectIds = selectedIdsFromRect(rect);
+      if (active.additive) {
+        setSelectedTrackIds(Array.from(new Set([...active.baseSelectedIds, ...rectIds])));
+      } else {
+        setSelectedTrackIds(rectIds);
+      }
     }
     event.preventDefault();
   }
@@ -983,7 +962,11 @@ export default function Home() {
     }
 
     if (!active.moved && active.clickedTrackId) {
-      toggleTrack(active.clickedTrackId);
+      if (event.shiftKey) {
+        addRangeSelection(active.clickedTrackId);
+      } else {
+        toggleTrack(active.clickedTrackId);
+      }
     }
 
     libraryMarqueeRef.current = null;
@@ -1148,7 +1131,12 @@ export default function Home() {
           generatorParams,
         }),
       });
-      const body = (await response.json()) as { error?: string; details?: string[]; jobs?: GenerationJob[]; job?: GenerationJob };
+      const body = (await response.json()) as {
+        error?: string;
+        details?: string[];
+        jobs?: GenerationJob[];
+        job?: GenerationJob;
+      };
       if (!response.ok) {
         if (body.details && body.details.length > 0) {
           throw new Error(`${body.error ?? "Could not create generation job(s)"} ${body.details.join(" ")}`);
@@ -1206,47 +1194,13 @@ export default function Home() {
     }
   }
 
-  const showLibrarySkeleton = (!tracksLoadedOnce && (tracksLoading || bootstrapping)) || (bootstrapping && tracks.length === 0);
+  const showLibrarySkeleton =
+    (!tracksLoadedOnce && (tracksLoading || bootstrapping)) || (bootstrapping && tracks.length === 0);
 
   if (!spotifyConnected) {
     return (
       <div className="app-root">
-        <main className="auth-shell">
-          <section className="auth-stage">
-            <div className="auth-card">
-              {bootstrapping ? (
-                <div className="list">
-                  <Skeleton style={{ height: "10px", width: "44%" }} />
-                  <Skeleton style={{ height: "52px", width: "78%" }} />
-                  <Skeleton style={{ height: "14px", width: "88%" }} />
-                </div>
-              ) : (
-                <>
-                  <p className="auth-kicker">NEOCLASSICAL MACHINE MUSIC INTERFACE</p>
-                  <h1 className="auth-title">
-                    <span>Liked Songs</span>
-                    <span>To Playable Maps</span>
-                  </h1>
-                  <p className="auth-sub">
-                    Bring in your Spotify liked songs, force title+artist substring matching against Ranked/Loved sets,
-                    then generate the unmatched tracks in batch.
-                  </p>
-                </>
-              )}
-            </div>
-            <div className="provider-row">
-              <Link href="/api/auth/spotify/login" className={cn(buttonVariants({ size: "lg" }))}>
-                Connect Spotify
-              </Link>
-              <Button variant="secondary" size="lg" disabled>
-                Apple Music Coming Soon
-              </Button>
-            </div>
-            <div className="auth-foot tiny muted">
-              Apple Music entry remains visible and ships when backend auth/import is enabled.
-            </div>
-          </section>
-        </main>
+        <AuthShell bootstrapping={bootstrapping} />
       </div>
     );
   }
@@ -1258,12 +1212,17 @@ export default function Home() {
           <div>
             <h1 className="workspace-title">osu-gpt / Dense Workspace</h1>
             <p className="workspace-meta">
-              Liked Songs: {totalTracks} | Selected: {selectionStats.total} | Matched: {selectionStats.matched} |
-              Unmatched: {selectionStats.unmatched} | Generated: {selectionStats.generated}
+              Liked Songs: {totalTracks} | Selected: {selectionStats.total} | Matched:{" "}
+              {selectionStats.matched} | Unmatched: {selectionStats.unmatched} | Generated:{" "}
+              {selectionStats.generated}
             </p>
           </div>
           <div className="workspace-actions">
-            <Button variant="secondary" onClick={() => void importSpotify()} disabled={busy || importStatus.status === "running"}>
+            <Button
+              variant="secondary"
+              onClick={() => void importSpotify()}
+              disabled={busy || importStatus.status === "running"}
+            >
               <RefreshCcw size={14} /> Sync Liked Songs
             </Button>
             <Button variant="ghost" onClick={logoutSpotify}>
@@ -1273,222 +1232,49 @@ export default function Home() {
         </header>
 
         <section className="workspace-grid">
-          <Card className="pane pane--compact">
-            <CardHeader>
-              <CardTitle>Filters</CardTitle>
-              <CardDescription>Server-backed filtering and pagination for large liked-song libraries.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="section-block">
-                <span className="section-label">Search</span>
-                <div className="row-wrap">
-                  <Search size={14} className="muted" />
-                  <Input
-                    placeholder="title / artist / album / source"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                  />
-                </div>
-              </div>
+          <FiltersPane
+            query={query}
+            onQueryChange={setQuery}
+            providerFilter={providerFilter}
+            onProviderFilterChange={setProviderFilter as (next: "all" | "spotify" | "apple") => void}
+            sourceFilter={sourceFilter}
+            onSourceFilterChange={setSourceFilter as (next: "all" | "liked" | "playlist" | "library") => void}
+            matchFilter={matchFilter}
+            onMatchFilterChange={
+              setMatchFilter as (next: "all" | "matched" | "unmatched" | "generated") => void
+            }
+            pageSize={pageSize}
+            onPageSizeChange={setPageSize}
+            page={page}
+            totalPages={totalPages}
+            onPrevPage={() => setPage((previous) => Math.max(1, previous - 1))}
+            onNextPage={() => setPage((previous) => Math.min(totalPages, previous + 1))}
+            visibleStart={visibleStart}
+            visibleEnd={visibleEnd}
+            tracksTotal={tracksTotal}
+            onSelectPageTracks={selectPageTracks}
+            onClearSelection={clearSelection}
+            pageTracksCount={tracks.length}
+            importStatus={importStatus}
+          />
 
-              <div className="section-block">
-                <span className="section-label">Provider</span>
-                <Select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value as ProviderFilter)}>
-                  <option value="all">All providers</option>
-                  <option value="spotify">Spotify</option>
-                  <option value="apple" disabled>
-                    Apple Music (coming soon)
-                  </option>
-                </Select>
-              </div>
-
-              <div className="section-block">
-                <span className="section-label">Source</span>
-                <Select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as SourceFilter)}>
-                  <option value="all">All sources</option>
-                  <option value="liked">Liked songs</option>
-                </Select>
-              </div>
-
-              <div className="section-block">
-                <span className="section-label">Status</span>
-                <Select value={matchFilter} onChange={(event) => setMatchFilter(event.target.value as MatchFilter)}>
-                  <option value="all">All tracks</option>
-                  <option value="matched">Matched</option>
-                  <option value="unmatched">Unmatched</option>
-                  <option value="generated">Generated</option>
-                </Select>
-              </div>
-
-              <div className="section-block">
-                <span className="section-label">Pagination</span>
-                <Select
-                  value={String(pageSize)}
-                  onChange={(event) => setPageSize(Math.max(20, Number(event.target.value || 60)))}
-                >
-                  <option value="30">30 / page</option>
-                  <option value="60">60 / page</option>
-                  <option value="100">100 / page</option>
-                  <option value="150">150 / page</option>
-                </Select>
-                <div className="row-wrap">
-                  <Button variant="secondary" size="sm" onClick={() => setPage((previous) => Math.max(1, previous - 1))} disabled={page <= 1}>
-                    <ChevronLeft size={14} />
-                    Prev
-                  </Button>
-                  <Badge variant="neutral">
-                    Page {page} / {totalPages}
-                  </Badge>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setPage((previous) => Math.min(totalPages, previous + 1))}
-                    disabled={page >= totalPages}
-                  >
-                    Next
-                    <ChevronRight size={14} />
-                  </Button>
-                </div>
-                <p className="tiny muted">
-                  Showing {visibleStart}-{visibleEnd} of {tracksTotal} filtered tracks
-                </p>
-              </div>
-
-              <div className="divider" />
-
-              <div className="section-block">
-                <span className="section-label">Selection</span>
-                <div className="row-wrap">
-                  <Button variant="secondary" size="sm" onClick={selectPageTracks}>
-                    Add page ({tracks.length})
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={clearSelection}>
-                    Clear
-                  </Button>
-                </div>
-              </div>
-
-              <div className="divider" />
-
-              <div className="section-block">
-                <div className="row">
-                  <span className="section-label">Import Status</span>
-                  <Badge variant={importStatus.status === "failed" ? "danger" : "neutral"}>{importStatus.status}</Badge>
-                </div>
-                <Progress value={importProgress(importStatus)} />
-                <p className="tiny muted">
-                  {importStatus.message ?? "Ready"} {importStatus.importedCount ? `(${importStatus.importedCount} processed)` : ""}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="pane pane--library">
-            <div className="pane-head">
-              <h2 className="pane-title">Library Grid</h2>
-              <div className="row-wrap">
-                <Badge variant="neutral">
-                  {visibleStart}-{visibleEnd} / {tracksTotal}
-                </Badge>
-                <Badge variant="info">{selectedTrackIds.length} selected</Badge>
-                {tracksLoading ? <Badge variant="warning">Loading...</Badge> : null}
-              </div>
-            </div>
-            <div className="pane-body pane-body--fill">
-              <ScrollArea
-                ref={libraryScrollRef}
-                className="ui-scroll-area library-scroll"
-                onPointerDown={handleLibraryPointerDown}
-                onPointerMove={handleLibraryPointerMove}
-                onPointerUp={handleLibraryPointerEnd}
-                onPointerCancel={handleLibraryPointerEnd}
-                onDragStart={(event) => event.preventDefault()}
-              >
-                {showLibrarySkeleton ? (
-                  <div className="library-grid">
-                    {librarySkeletonItems(18).map((key) => (
-                      <article key={`skeleton-${key}`} className="track-card track-card--skeleton">
-                        <div className="track-topline">
-                          <Skeleton style={{ width: "14px", height: "14px" }} />
-                          <Skeleton style={{ width: "42px", height: "10px" }} />
-                        </div>
-                        <Skeleton style={{ width: "100%", aspectRatio: "1 / 1" }} />
-                        <div className="track-content">
-                          <Skeleton style={{ width: "88%", height: "12px" }} />
-                          <Skeleton style={{ width: "62%", height: "10px" }} />
-                          <Skeleton style={{ width: "73%", height: "10px" }} />
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <>
-                    <div className="library-marquee-layer">
-                      <div className="library-grid">
-                        {tracks.map((track) => {
-                          const selected = selectedTrackSet.has(track.id);
-                          const generated = completedTrackIdSet.has(track.id);
-
-                          return (
-                            <article
-                              key={track.id}
-                              className="track-card"
-                              data-track-id={track.id}
-                              data-selected={selected ? "true" : "false"}
-                            >
-                              <div className="track-topline">
-                                <Checkbox
-                                  data-no-marquee="true"
-                                  checked={selected}
-                                  onChange={() => toggleTrack(track.id)}
-                                  onPointerDown={(event) => event.stopPropagation()}
-                                  onClick={(event) => event.stopPropagation()}
-                                  aria-label={`Select ${track.title}`}
-                                />
-                                <span className="track-meta">{msToClock(track.durationMs)}</span>
-                              </div>
-                              <div className="track-art">
-                                {track.artworkUrl ? (
-                                  <Image
-                                    src={track.artworkUrl}
-                                    alt={`${track.title} artwork`}
-                                    fill
-                                    unoptimized
-                                    sizes="(max-width: 900px) 45vw, 160px"
-                                  />
-                                ) : null}
-                              </div>
-                              <div className="track-content">
-                                <h3 className="track-title">{track.title}</h3>
-                                <p className="track-meta">{track.artists.join(", ")}</p>
-                                <p className="track-meta">{track.album}</p>
-                                <div className="track-flags">
-                                  <Badge variant="neutral">{track.sourceLabel}</Badge>
-                                  {generated ? <Badge variant="info">Generated</Badge> : null}
-                                </div>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                      {selectionRect && (selectionRect.width > 5 || selectionRect.height > 5) ? (
-                        <div
-                          className="library-selection-box"
-                          style={{
-                            left: `${selectionRect.left}px`,
-                            top: `${selectionRect.top}px`,
-                            width: `${selectionRect.width}px`,
-                            height: `${selectionRect.height}px`,
-                          }}
-                        />
-                      ) : null}
-                    </div>
-                    {tracks.length === 0 ? <p className="tiny muted">No tracks on this page. Adjust filters or import again.</p> : null}
-                  </>
-                )}
-              </ScrollArea>
-            </div>
-          </Card>
+          <LibraryPane
+            visibleStart={visibleStart}
+            visibleEnd={visibleEnd}
+            tracksTotal={tracksTotal}
+            selectedCount={selectedTrackIds.length}
+            tracksLoading={tracksLoading}
+            scrollRef={libraryScrollRef}
+            onPointerDown={handleLibraryPointerDown}
+            onPointerMove={handleLibraryPointerMove}
+            onPointerEnd={handleLibraryPointerEnd}
+            showLibrarySkeleton={showLibrarySkeleton}
+            tracks={tracks}
+            selectedTrackSet={selectedTrackSet}
+            completedTrackIdSet={completedTrackIdSet}
+            onToggleTrack={toggleTrack}
+            selectionRect={selectionRect}
+          />
 
           <Card className="pane pane-right">
             <div className="pane-head">
@@ -1514,7 +1300,9 @@ export default function Home() {
                       </Button>
                     </div>
                   ) : (
-                    <p className="tiny muted">Downloader acknowledgment: {new Date(spotdlAckAt).toLocaleString()}</p>
+                    <p className="tiny muted">
+                      Downloader acknowledgment: {new Date(spotdlAckAt).toLocaleString()}
+                    </p>
                   )}
 
                   <div className="divider" />
@@ -1536,12 +1324,18 @@ export default function Home() {
                               <p className="tiny muted">1. Sign in at osu.ppy.sh.</p>
                               <p className="tiny muted">
                                 2. Open{" "}
-                                <Link href="https://osu.ppy.sh/home/account/edit#new-oauth-application" target="_blank" rel="noreferrer">
+                                <Link
+                                  href="https://osu.ppy.sh/home/account/edit#new-oauth-application"
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
                                   Account Settings - OAuth Applications
                                 </Link>
                                 .
                               </p>
-                              <p className="tiny muted">3. Create an OAuth app, then copy Client ID and Client Secret.</p>
+                              <p className="tiny muted">
+                                3. Create an OAuth app, then copy Client ID and Client Secret.
+                              </p>
                               <p className="tiny muted">
                                 4. Paste them here and click <strong>Save osu API Session</strong>.
                               </p>
@@ -1559,14 +1353,20 @@ export default function Home() {
                             onChange={(event) => setOsuClientSecret(event.target.value)}
                           />
                           <div className="row-wrap">
-                            <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
+                            <Button
+                              variant="secondary"
+                              onClick={() => void saveOsuRuntimeSession()}
+                              disabled={busy}
+                            >
                               Save osu API Session
                             </Button>
                           </div>
                         </>
                       ) : (
                         <details className="inline-help">
-                          <summary className="tiny muted">Override credentials for this browser (optional)</summary>
+                          <summary className="tiny muted">
+                            Override credentials for this browser (optional)
+                          </summary>
                           <div className="list">
                             <Input
                               placeholder="osu OAuth Client ID"
@@ -1580,10 +1380,18 @@ export default function Home() {
                               onChange={(event) => setOsuClientSecret(event.target.value)}
                             />
                             <div className="row-wrap">
-                              <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
+                              <Button
+                                variant="secondary"
+                                onClick={() => void saveOsuRuntimeSession()}
+                                disabled={busy}
+                              >
                                 Save osu API Session
                               </Button>
-                              <Button variant="ghost" onClick={() => void clearOsuRuntimeSession()} disabled={busy}>
+                              <Button
+                                variant="ghost"
+                                onClick={() => void clearOsuRuntimeSession()}
+                                disabled={busy}
+                              >
                                 Clear osu API Session
                               </Button>
                             </div>
@@ -1591,7 +1399,10 @@ export default function Home() {
                         </details>
                       )}
                     </div>
-                    <Button onClick={() => void runBatchMatch()} disabled={matching || busy || selectedTrackIds.length === 0}>
+                    <Button
+                      onClick={() => void runBatchMatch()}
+                      disabled={matching || busy || selectedTrackIds.length === 0}
+                    >
                       {matching ? <LoaderCircle size={14} className="spin" /> : <Search size={14} />}
                       Find osu matches
                     </Button>
@@ -1607,16 +1418,24 @@ export default function Home() {
 
                   <div className="section-block">
                     <span className="section-label">Generation profile</span>
-                    <Select value={runtime} onChange={(event) => setRuntime(event.target.value as "local" | "hosted_aws")}>
+                    <Select
+                      value={runtime}
+                      onChange={(event) => setRuntime(event.target.value as "local" | "hosted_aws")}
+                    >
                       <option value="local">Local runtime</option>
                       <option value="hosted_aws">Hosted AWS runtime</option>
                     </Select>
-                    <Select value={preset} onChange={(event) => setPreset(event.target.value as typeof preset)}>
+                    <Select
+                      value={preset}
+                      onChange={(event) => setPreset(event.target.value as typeof preset)}
+                    >
                       <option value="quick">Quick</option>
                       <option value="balanced">Balanced</option>
                       <option value="high_quality">High Quality</option>
                     </Select>
-                    <span className="tiny muted">Style preset (combined archetypes + mapper-inspired examples)</span>
+                    <span className="tiny muted">
+                      Style preset (combined archetypes + mapper-inspired examples)
+                    </span>
                     <Select value={stylePresetId} onChange={(event) => applyStylePreset(event.target.value)}>
                       {stylePresetOptions.map((presetOption) => (
                         <option key={presetOption.id} value={presetOption.id}>
@@ -1624,9 +1443,14 @@ export default function Home() {
                         </option>
                       ))}
                     </Select>
-                    {selectedStylePreset ? <p className="tiny muted">{selectedStylePreset.description}</p> : null}
+                    {selectedStylePreset ? (
+                      <p className="tiny muted">{selectedStylePreset.description}</p>
+                    ) : null}
                     <span className="tiny muted">Mapper lock (optional)</span>
-                    <Select value={mapperChoiceId} onChange={(event) => applyMapperChoice(event.target.value)}>
+                    <Select
+                      value={mapperChoiceId}
+                      onChange={(event) => applyMapperChoice(event.target.value)}
+                    >
                       <option value="none">No mapper lock</option>
                       {mapperStylePresets.map((mapperOption) => (
                         <option key={mapperOption.id} value={mapperOption.id}>
@@ -1635,7 +1459,9 @@ export default function Home() {
                       ))}
                       <option value="other">Other (custom mapper ID)</option>
                     </Select>
-                    {selectedMapperOption ? <p className="tiny muted">{selectedMapperOption.description}</p> : null}
+                    {selectedMapperOption ? (
+                      <p className="tiny muted">{selectedMapperOption.description}</p>
+                    ) : null}
                     {mapperChoiceId === "other" ? (
                       <Input
                         type="number"
@@ -1646,7 +1472,8 @@ export default function Home() {
                     ) : null}
 
                     <p className="tiny muted">
-                      Style preset applies descriptors plus optional AR/OD/CS/SR defaults. Mapper lock is independent and optional.
+                      Style preset applies descriptors plus optional AR/OD/CS/SR defaults. Mapper lock is
+                      independent and optional.
                     </p>
 
                     <div className="section-block generator-control">
@@ -1679,7 +1506,12 @@ export default function Home() {
                         min={2007}
                         max={new Date().getUTCFullYear()}
                         value={generatorParams.year ?? ""}
-                        onChange={(event) => updateGeneratorParam("year", event.target.value === "" ? null : Number(event.target.value))}
+                        onChange={(event) =>
+                          updateGeneratorParam(
+                            "year",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
+                        }
                       />
                     </div>
 
@@ -1715,7 +1547,10 @@ export default function Home() {
                         max={11}
                         value={generatorParams.approachRate ?? ""}
                         onChange={(event) =>
-                          updateGeneratorParam("approachRate", event.target.value === "" ? null : Number(event.target.value))
+                          updateGeneratorParam(
+                            "approachRate",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
                         }
                       />
                     </div>
@@ -1732,7 +1567,10 @@ export default function Home() {
                         max={11}
                         value={generatorParams.overallDifficulty ?? ""}
                         onChange={(event) =>
-                          updateGeneratorParam("overallDifficulty", event.target.value === "" ? null : Number(event.target.value))
+                          updateGeneratorParam(
+                            "overallDifficulty",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
                         }
                       />
                     </div>
@@ -1749,7 +1587,10 @@ export default function Home() {
                         max={7}
                         value={generatorParams.circleSize ?? ""}
                         onChange={(event) =>
-                          updateGeneratorParam("circleSize", event.target.value === "" ? null : Number(event.target.value))
+                          updateGeneratorParam(
+                            "circleSize",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
                         }
                       />
                     </div>
@@ -1766,7 +1607,10 @@ export default function Home() {
                         max={10}
                         value={generatorParams.hpDrainRate ?? ""}
                         onChange={(event) =>
-                          updateGeneratorParam("hpDrainRate", event.target.value === "" ? null : Number(event.target.value))
+                          updateGeneratorParam(
+                            "hpDrainRate",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
                         }
                       />
                     </div>
@@ -1783,7 +1627,10 @@ export default function Home() {
                         max={2}
                         value={generatorParams.cfgScale ?? ""}
                         onChange={(event) =>
-                          updateGeneratorParam("cfgScale", event.target.value === "" ? null : Number(event.target.value))
+                          updateGeneratorParam(
+                            "cfgScale",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
                         }
                       />
                     </div>
@@ -1800,7 +1647,10 @@ export default function Home() {
                         max={2}
                         value={generatorParams.temperature ?? ""}
                         onChange={(event) =>
-                          updateGeneratorParam("temperature", event.target.value === "" ? null : Number(event.target.value))
+                          updateGeneratorParam(
+                            "temperature",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
                         }
                       />
                     </div>
@@ -1816,7 +1666,12 @@ export default function Home() {
                         min={0}
                         max={1}
                         value={generatorParams.topP ?? ""}
-                        onChange={(event) => updateGeneratorParam("topP", event.target.value === "" ? null : Number(event.target.value))}
+                        onChange={(event) =>
+                          updateGeneratorParam(
+                            "topP",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
+                        }
                       />
                     </div>
 
@@ -1831,7 +1686,9 @@ export default function Home() {
                       <label className="tiny muted row-wrap">
                         <Checkbox
                           checked={Boolean(generatorParams.generatePositions)}
-                          onChange={(event) => updateGeneratorParam("generatePositions", event.target.checked)}
+                          onChange={(event) =>
+                            updateGeneratorParam("generatePositions", event.target.checked)
+                          }
                         />
                         Diffusion positions
                       </label>
@@ -1872,7 +1729,10 @@ export default function Home() {
                             max={8}
                             value={generatorParams.sliderTickRate ?? ""}
                             onChange={(event) =>
-                              updateGeneratorParam("sliderTickRate", event.target.value === "" ? null : Number(event.target.value))
+                              updateGeneratorParam(
+                                "sliderTickRate",
+                                event.target.value === "" ? null : Number(event.target.value),
+                              )
                             }
                           />
                         </div>
@@ -1881,14 +1741,21 @@ export default function Home() {
                           <Input
                             type="number"
                             value={generatorParams.seed ?? ""}
-                            onChange={(event) => updateGeneratorParam("seed", event.target.value === "" ? null : Number(event.target.value))}
+                            onChange={(event) =>
+                              updateGeneratorParam(
+                                "seed",
+                                event.target.value === "" ? null : Number(event.target.value),
+                              )
+                            }
                           />
                         </div>
                         <div className="section-block generator-control">
                           <span className="tiny muted">Device target (enum, optional)</span>
                           <Select
                             value={generatorParams.device ?? "auto"}
-                            onChange={(event) => updateGeneratorParam("device", event.target.value as GeneratorParams["device"])}
+                            onChange={(event) =>
+                              updateGeneratorParam("device", event.target.value as GeneratorParams["device"])
+                            }
                           >
                             <option value="auto">auto</option>
                             <option value="cuda">cuda</option>
@@ -1901,7 +1768,10 @@ export default function Home() {
                           <Select
                             value={generatorParams.precision ?? "auto"}
                             onChange={(event) =>
-                              updateGeneratorParam("precision", event.target.value as GeneratorParams["precision"])
+                              updateGeneratorParam(
+                                "precision",
+                                event.target.value as GeneratorParams["precision"],
+                              )
                             }
                           >
                             <option value="auto">auto</option>
@@ -1933,7 +1803,9 @@ export default function Home() {
                             multiple
                             size={7}
                             value={generatorParams.negativeDescriptors ?? []}
-                            onChange={(event) => updateGeneratorParam("negativeDescriptors", selectedMultiValues(event))}
+                            onChange={(event) =>
+                              updateGeneratorParam("negativeDescriptors", selectedMultiValues(event))
+                            }
                           >
                             {negativeDescriptorOptions.map((descriptor) => (
                               <option key={descriptor} value={descriptor}>
@@ -1948,7 +1820,9 @@ export default function Home() {
                             multiple
                             size={4}
                             value={generatorParams.inContext ?? []}
-                            onChange={(event) => updateGeneratorParam("inContext", selectedMultiValues(event))}
+                            onChange={(event) =>
+                              updateGeneratorParam("inContext", selectedMultiValues(event))
+                            }
                           >
                             {inContextOptions.map((option) => (
                               <option key={option} value={option}>
@@ -1963,7 +1837,9 @@ export default function Home() {
                             multiple
                             size={3}
                             value={generatorParams.outputType ?? []}
-                            onChange={(event) => updateGeneratorParam("outputType", selectedMultiValues(event))}
+                            onChange={(event) =>
+                              updateGeneratorParam("outputType", selectedMultiValues(event))
+                            }
                           >
                             {outputTypeOptions.map((option) => (
                               <option key={option} value={option}>
@@ -2002,7 +1878,8 @@ export default function Home() {
                         </div>
                         <p className="tiny muted">
                           Quick setup: run <code>aws configure sso</code> once, then{" "}
-                          <code>aws sso login --profile {(awsProfile.trim() || "default")}</code>, then click auto-load.
+                          <code>aws sso login --profile {awsProfile.trim() || "default"}</code>, then click
+                          auto-load.
                         </p>
                         <div className="row-wrap">
                           <Input
@@ -2010,21 +1887,45 @@ export default function Home() {
                             value={awsProfile}
                             onChange={(event) => setAwsProfile(event.target.value)}
                           />
-                          <Button variant="secondary" onClick={() => void autoLoadAwsRuntimeSession()} disabled={busy}>
+                          <Button
+                            variant="secondary"
+                            onClick={() => void autoLoadAwsRuntimeSession()}
+                            disabled={busy}
+                          >
                             Auto-load AWS (recommended)
                           </Button>
-                          <Button variant="secondary" onClick={() => void loadAwsRuntimeSessionFromCli()} disabled={busy}>
+                          <Button
+                            variant="secondary"
+                            onClick={() => void loadAwsRuntimeSessionFromCli()}
+                            disabled={busy}
+                          >
                             Load from AWS CLI
                           </Button>
-                          <Button variant="ghost" onClick={() => void clearAwsRuntimeSession()} disabled={busy}>
+                          <Button
+                            variant="ghost"
+                            onClick={() => void clearAwsRuntimeSession()}
+                            disabled={busy}
+                          >
                             Clear AWS Session
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => void saveAwsRuntimeResources()}
+                            disabled={busy}
+                          >
+                            Save AWS Resources
                           </Button>
                         </div>
                         <p className="tiny muted">
-                          Auto-load resolves credentials from AWS SDK chain (env vars, shared config/profile, SSO cache, or instance role) and
-                          tries to discover queue/job definition/S3 bucket automatically.
+                          Auto-load resolves credentials from AWS SDK chain (env vars, shared config/profile,
+                          SSO cache, or instance role) and tries to discover queue/job definition/S3 bucket
+                          automatically.
                         </p>
-                        <Input placeholder="Region (e.g. us-east-1)" value={awsRegion} onChange={(event) => setAwsRegion(event.target.value)} />
+                        <Input
+                          placeholder="Region (e.g. us-east-1)"
+                          value={awsRegion}
+                          onChange={(event) => setAwsRegion(event.target.value)}
+                        />
                         <Input
                           placeholder="Batch Queue ARN or name"
                           value={awsBatchQueue}
@@ -2035,8 +1936,16 @@ export default function Home() {
                           value={awsBatchJobDefinition}
                           onChange={(event) => setAwsBatchJobDefinition(event.target.value)}
                         />
-                        <Input placeholder="S3 Bucket" value={awsS3Bucket} onChange={(event) => setAwsS3Bucket(event.target.value)} />
-                        <Input placeholder="S3 Prefix" value={awsS3Prefix} onChange={(event) => setAwsS3Prefix(event.target.value)} />
+                        <Input
+                          placeholder="S3 Bucket"
+                          value={awsS3Bucket}
+                          onChange={(event) => setAwsS3Bucket(event.target.value)}
+                        />
+                        <Input
+                          placeholder="S3 Prefix"
+                          value={awsS3Prefix}
+                          onChange={(event) => setAwsS3Prefix(event.target.value)}
+                        />
                         <Input
                           placeholder="CloudWatch Log Group"
                           value={awsCloudWatchLogGroup}
@@ -2045,33 +1954,45 @@ export default function Home() {
                         {awsSessionStatus.accessKeyIdHint ? (
                           <p className="tiny muted">Active key: {awsSessionStatus.accessKeyIdHint}</p>
                         ) : null}
-                        {awsSessionStatus.profile ? <p className="tiny muted">Loaded profile: {awsSessionStatus.profile}</p> : null}
+                        {awsSessionStatus.profile ? (
+                          <p className="tiny muted">Loaded profile: {awsSessionStatus.profile}</p>
+                        ) : null}
+                        {awsSessionStatus.missingFields && awsSessionStatus.missingFields.length > 0 ? (
+                          <p className="warn-text">
+                            Missing fields: {awsSessionStatus.missingFields.join(", ")}
+                          </p>
+                        ) : null}
                         <div className="section-block generator-control">
                           <span className="tiny muted generator-label">
                             <Cpu size={12} />
                             Hosted inference GPU
                           </span>
                           {awsSessionStatus.gpuHint ? (
-                            <p className="tiny muted">Detected queue instance/GPU: {awsSessionStatus.gpuHint}</p>
+                            <p className="tiny muted">
+                              Detected queue instance/GPU: {awsSessionStatus.gpuHint}
+                            </p>
                           ) : (
                             <p className="tiny muted">
-                              GPU model comes from your AWS Batch compute environment instance types for the selected queue.
+                              GPU model comes from your AWS Batch compute environment instance types for the
+                              selected queue.
                             </p>
                           )}
                           {awsSessionStatus.gpuCountPerJob ? (
-                            <p className="tiny muted">Job definition GPU count: {awsSessionStatus.gpuCountPerJob}</p>
+                            <p className="tiny muted">
+                              Job definition GPU count: {awsSessionStatus.gpuCountPerJob}
+                            </p>
                           ) : null}
                           <p className="tiny muted">
-                            Typical picks: `g6.xlarge` (L4) for cost/perf, `g6e.xlarge` (L40S) for more VRAM/throughput, `p5` for
-                            high-throughput premium.
+                            Typical picks: `g6.xlarge` (L4) for cost/perf, `g6e.xlarge` (L40S) for more
+                            VRAM/throughput, `p5` for high-throughput premium.
                           </p>
                         </div>
                         <details className="inline-help">
                           <summary className="tiny muted">Fallbacks and manual entry</summary>
                           <div className="list">
                             <p className="tiny muted">
-                              If auto-load fails, try `Load from AWS CLI` (uses `aws configure export-credentials`) or enter IAM credentials
-                              manually.
+                              If auto-load fails, try `Load from AWS CLI` (uses `aws configure
+                              export-credentials`) or enter IAM credentials manually.
                             </p>
                             <Input
                               placeholder="AWS Access Key ID"
@@ -2091,7 +2012,11 @@ export default function Home() {
                               onChange={(event) => setAwsSessionToken(event.target.value)}
                             />
                             <div className="row-wrap">
-                              <Button variant="secondary" onClick={() => void saveAwsRuntimeSession()} disabled={busy}>
+                              <Button
+                                variant="secondary"
+                                onClick={() => void saveAwsRuntimeSession()}
+                                disabled={busy}
+                              >
                                 Save AWS Session
                               </Button>
                             </div>
@@ -2104,11 +2029,20 @@ export default function Home() {
                       <summary className="tiny muted">How to get required API keys (osu + AWS)</summary>
                       <div className="list tiny muted">
                         <p>
-                          osu: create an OAuth application at <Link href="https://osu.ppy.sh/home/account/edit#new-oauth-application" target="_blank" rel="noreferrer">osu account settings</Link> and add client id/secret to env.
+                          osu: create an OAuth application at{" "}
+                          <Link
+                            href="https://osu.ppy.sh/home/account/edit#new-oauth-application"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            osu account settings
+                          </Link>{" "}
+                          and add client id/secret to env.
                         </p>
                         <p>
-                          AWS: easiest path is AWS CLI SSO via <code>aws configure sso</code> and then <code>Load from AWS CLI</code>. Manual IAM
-                          access keys are only needed for advanced/manual mode. Prefer <code>Auto-load AWS</code> first.
+                          AWS: easiest path is AWS CLI SSO via <code>aws configure sso</code> and then{" "}
+                          <code>Load from AWS CLI</code>. Manual IAM access keys are only needed for
+                          advanced/manual mode. Prefer <code>Auto-load AWS</code> first.
                         </p>
                       </div>
                     </details>
@@ -2146,12 +2080,16 @@ export default function Home() {
                               <div key={track.id} className="job-card">
                                 <div className="row">
                                   <span className="tiny">{track.title}</span>
-                                  <Badge variant={best.status === "ranked" ? "success" : "warning"}>{best.status}</Badge>
+                                  <Badge variant={best.status === "ranked" ? "success" : "warning"}>
+                                    {best.status}
+                                  </Badge>
                                 </div>
                                 <p className="tiny muted">
                                   {best.artist} - {best.title}
                                 </p>
-                                {matchMetaText(best) ? <p className="tiny muted">{matchMetaText(best)}</p> : null}
+                                {matchMetaText(best) ? (
+                                  <p className="tiny muted">{matchMetaText(best)}</p>
+                                ) : null}
                                 <p className="tiny muted">{best.rationale}</p>
                                 <Link
                                   href={best.url}
@@ -2174,7 +2112,9 @@ export default function Home() {
                     <ScrollArea className="ui-scroll-area jobs-scroll">
                       <div className="list">
                         {unmatchedTopHits.length === 0 ? (
-                          <p className="tiny muted">No top-hit suggestions yet for unmatched selected tracks.</p>
+                          <p className="tiny muted">
+                            No top-hit suggestions yet for unmatched selected tracks.
+                          </p>
                         ) : (
                           unmatchedTopHits.map(({ track, snapshot }) => {
                             if (!track || !snapshot?.topHit) return null;
@@ -2183,12 +2123,16 @@ export default function Home() {
                               <div key={`${track.id}-top-hit`} className="job-card">
                                 <div className="row">
                                   <span className="tiny">{track.title}</span>
-                                  <Badge variant={topHit.status === "ranked" ? "success" : "warning"}>{topHit.status}</Badge>
+                                  <Badge variant={topHit.status === "ranked" ? "success" : "warning"}>
+                                    {topHit.status}
+                                  </Badge>
                                 </div>
                                 <p className="tiny muted">
                                   Suggested: {topHit.artist} - {topHit.title}
                                 </p>
-                                {matchMetaText(topHit) ? <p className="tiny muted">{matchMetaText(topHit)}</p> : null}
+                                {matchMetaText(topHit) ? (
+                                  <p className="tiny muted">{matchMetaText(topHit)}</p>
+                                ) : null}
                                 <p className="tiny muted">{topHit.rationale}</p>
                                 <Link
                                   href={topHit.url}
@@ -2209,7 +2153,10 @@ export default function Home() {
                   <div className="section-block">
                     <span className="section-label">Jobs + Export</span>
                     <div className="row-wrap">
-                      <Button onClick={() => void downloadZip()} disabled={busy || selectedTrackIds.length === 0}>
+                      <Button
+                        onClick={() => void downloadZip()}
+                        disabled={busy || selectedTrackIds.length === 0}
+                      >
                         <Download size={14} />
                         Download ZIP
                       </Button>
@@ -2239,7 +2186,9 @@ export default function Home() {
                             ) : null}
                             {job.warning ? <p className="warn-text">{job.warning}</p> : null}
                             {job.error ? <p className="error-text">{job.error}</p> : null}
-                            {job.logs.length > 0 ? <pre className="job-logs">{job.logs.slice(-8).join("\n")}</pre> : null}
+                            {job.logs.length > 0 ? (
+                              <pre className="job-logs">{job.logs.slice(-8).join("\n")}</pre>
+                            ) : null}
                             {job.artifacts.length > 0 ? (
                               <div className="list">
                                 {job.artifacts.map((artifact) => (

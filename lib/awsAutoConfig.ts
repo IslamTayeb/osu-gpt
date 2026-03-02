@@ -27,11 +27,12 @@ type AutoDetectAwsRuntimeResourcesInput = {
 };
 
 export type AutoDetectedAwsRuntimeResources = {
-  batchQueue: string;
-  batchJobDefinition: string;
-  s3Bucket: string;
+  batchQueue?: string;
+  batchJobDefinition?: string;
+  s3Bucket?: string;
   s3Prefix: string;
   cloudWatchLogGroup: string;
+  missing: string[];
 };
 
 function cleaned(value: string | undefined) {
@@ -51,27 +52,34 @@ function choosePreferredQueue(
   const enabledValid = queues.filter((queue) => queue.state === "ENABLED" && queue.status === "VALID");
   const pool = enabledValid.length > 0 ? enabledValid : queues;
   const preferred =
-    pool.find((queue) => /osu|map|batch|gpu/i.test(`${queue.jobQueueName ?? ""} ${queue.jobQueueArn ?? ""}`)) ?? pool[0];
+    pool.find((queue) =>
+      /osu|map|batch|gpu/i.test(`${queue.jobQueueName ?? ""} ${queue.jobQueueArn ?? ""}`),
+    ) ?? pool[0];
   return cleaned(preferred.jobQueueArn) || cleaned(preferred.jobQueueName);
 }
 
 function choosePreferredJobDefinition(
-  definitions: Array<{
-    status?: string;
-    type?: string;
-    revision?: number;
-    jobDefinitionName?: string;
-    jobDefinitionArn?: string;
-  }> | undefined,
+  definitions:
+    | Array<{
+        status?: string;
+        type?: string;
+        revision?: number;
+        jobDefinitionName?: string;
+        jobDefinitionArn?: string;
+      }>
+    | undefined,
 ) {
   if (!definitions || definitions.length === 0) {
     return "";
   }
-  const active = definitions.filter((definition) => definition.status === "ACTIVE" && definition.type === "container");
+  const active = definitions.filter(
+    (definition) => definition.status === "ACTIVE" && definition.type === "container",
+  );
   const pool = active.length > 0 ? active : definitions;
   const ranked = [...pool].sort((left, right) => (right.revision ?? 0) - (left.revision ?? 0));
   const preferred =
-    ranked.find((definition) => /osu|mapper|map|inference/i.test(definition.jobDefinitionName ?? "")) ?? ranked[0];
+    ranked.find((definition) => /osu|mapper|map|inference/i.test(definition.jobDefinitionName ?? "")) ??
+    ranked[0];
   return cleaned(preferred.jobDefinitionArn) || cleaned(preferred.jobDefinitionName);
 }
 
@@ -79,7 +87,8 @@ function choosePreferredBucket(buckets: Array<{ Name?: string }> | undefined) {
   if (!buckets || buckets.length === 0) {
     return "";
   }
-  const preferred = buckets.find((bucket) => /osu|map|beatmap|mapper|ml|ai/i.test(bucket.Name ?? "")) ?? buckets[0];
+  const preferred =
+    buckets.find((bucket) => /osu|map|beatmap|mapper|ml|ai/i.test(bucket.Name ?? "")) ?? buckets[0];
   return cleaned(preferred.Name);
 }
 
@@ -121,7 +130,8 @@ export async function autoDetectAwsRuntimeResources(
   let batchJobDefinition = withEnvFallback(input.resources.batchJobDefinition, "AWS_BATCH_JOB_DEFINITION");
   let s3Bucket = withEnvFallback(input.resources.s3Bucket, "AWS_S3_BUCKET");
   const s3Prefix = withEnvFallback(input.resources.s3Prefix, "AWS_S3_PREFIX") || "osu-gpt";
-  const cloudWatchLogGroup = withEnvFallback(input.resources.cloudWatchLogGroup, "AWS_CLOUDWATCH_LOG_GROUP") || "/aws/batch/job";
+  const cloudWatchLogGroup =
+    withEnvFallback(input.resources.cloudWatchLogGroup, "AWS_CLOUDWATCH_LOG_GROUP") || "/aws/batch/job";
 
   const batch = new BatchClient({ region, credentials });
 
@@ -136,7 +146,9 @@ export async function autoDetectAwsRuntimeResources(
 
   if (!batchJobDefinition) {
     try {
-      const definitionResponse = await batch.send(new DescribeJobDefinitionsCommand({ status: "ACTIVE", maxResults: 100 }));
+      const definitionResponse = await batch.send(
+        new DescribeJobDefinitionsCommand({ status: "ACTIVE", maxResults: 100 }),
+      );
       batchJobDefinition = choosePreferredJobDefinition(definitionResponse.jobDefinitions);
     } catch {
       // Resource discovery is best-effort.
@@ -158,18 +170,13 @@ export async function autoDetectAwsRuntimeResources(
   if (!batchJobDefinition) missing.push("batchJobDefinition");
   if (!s3Bucket) missing.push("s3Bucket");
 
-  if (missing.length > 0) {
-    throw new Error(
-      `Could not auto-discover ${missing.join(", ")}. Fill those fields manually or set AWS_BATCH_QUEUE / AWS_BATCH_JOB_DEFINITION / AWS_S3_BUCKET env vars.`,
-    );
-  }
-
   return {
     batchQueue,
     batchJobDefinition,
     s3Bucket,
     s3Prefix,
     cloudWatchLogGroup,
+    missing,
   };
 }
 
@@ -218,7 +225,9 @@ export async function detectAwsBatchGpuHint(input: DetectAwsBatchGpuHintInput): 
       jobDefinitionResponse.jobDefinitions
         ?.filter((definition) => definition.status === "ACTIVE")
         .sort((left, right) => (right.revision ?? 0) - (left.revision ?? 0))[0] ?? null;
-    const requirement = jobDefinition?.containerProperties?.resourceRequirements?.find((item) => item.type === "GPU");
+    const requirement = jobDefinition?.containerProperties?.resourceRequirements?.find(
+      (item) => item.type === "GPU",
+    );
     const parsed = requirement?.value ? Number(requirement.value) : NaN;
     if (Number.isFinite(parsed) && parsed > 0) {
       gpuCountPerJob = Math.floor(parsed);

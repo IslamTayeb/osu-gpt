@@ -3,10 +3,7 @@ import { readStore } from "@/lib/store";
 
 export const runtime = "nodejs";
 
-export async function GET(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
+export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const job = readStore().jobs.find((item) => item.id === id);
 

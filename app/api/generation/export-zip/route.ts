@@ -34,7 +34,7 @@ function sanitizePath(input: string) {
 }
 
 function escapeCsvCell(value: string) {
-  const escaped = value.replaceAll("\"", "\"\"");
+  const escaped = value.replaceAll('"', '""');
   return `"${escaped}"`;
 }
 
@@ -89,14 +89,17 @@ function preferredMatch(matches: MatchResult[] | undefined) {
 function normalizeTrackIds(body: ExportRequest) {
   return Array.from(
     new Set(
-      (Array.isArray(body.trackIds) ? body.trackIds : [])
-        .map((trackId) => trackId.trim())
-        .filter(Boolean),
+      (Array.isArray(body.trackIds) ? body.trackIds : []).map((trackId) => trackId.trim()).filter(Boolean),
     ),
   );
 }
 
-function createManifestRow(track: Track, match: MatchResult | null, generationJobId: string, artifactFiles: string[]) {
+function createManifestRow(
+  track: Track,
+  match: MatchResult | null,
+  generationJobId: string,
+  artifactFiles: string[],
+) {
   return {
     trackId: track.id,
     title: track.title,
@@ -139,9 +142,7 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    const jobs = store.jobs.filter(
-      (job) => job.trackId === trackId && job.status === "completed",
-    );
+    const jobs = store.jobs.filter((job) => job.trackId === trackId && job.status === "completed");
     const sortedJobs = jobs.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
     const addedFiles: string[] = [];
@@ -151,9 +152,7 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const folder = sanitizePath(
-          `${track.artists.join("_")}_${track.title}_${track.id.slice(0, 8)}`,
-        );
+        const folder = sanitizePath(`${track.artists.join("_")}_${track.title}_${track.id.slice(0, 8)}`);
         const targetName = `generated/${folder}/${job.id.slice(0, 8)}_${sanitizePath(artifact.fileName)}`;
 
         if (artifact.storage === "s3") {

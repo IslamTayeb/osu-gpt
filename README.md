@@ -1,6 +1,7 @@
 # osu-gpt web MVP
 
 Simple v1 implementation of:
+
 - Spotify import (liked songs only)
 - osu! map lookup (Ranked/Loved, title+artist substring match)
 - Match-first flow with auto-generate fallback
@@ -42,6 +43,7 @@ OSU_API_KEY=...        # legacy key, currently unused by matching
 Current matching uses osu OAuth search for reliable query behavior.
 The unauthenticated public endpoint currently ignores search query terms in this environment.
 You can either:
+
 - set `OSU_CLIENT_ID` + `OSU_CLIENT_SECRET` in `.env`, or
 - save them in-app under `Actions / Results -> Batch match review -> osu API Session` (session cookie).
 
@@ -82,6 +84,7 @@ Hosted jobs require your own AWS Batch + S3 setup and session credentials entere
    - Region / queue / job definition / bucket / prefix
 
 Inference GPU note:
+
 - GPU model is determined by your AWS Batch compute environment instance types.
 - Typical instance choices:
   - `g6.xlarge` (L4) for balanced cost/perf.
@@ -93,11 +96,13 @@ Credentials are stored as an encrypted, HTTP-only session cookie and are not wri
 ## Runtime requirements
 
 Local generation needs:
+
 - `spotdl` installed and available on PATH
 - `python` available on PATH
 - `../Mapperatorinator` present and runnable
 
 Hosted generation needs:
+
 - AWS Batch queue + job definition that can run your generation worker
 - S3 bucket access for artifact upload/download
 - AWS credentials with Batch + S3 (+ optional CloudWatch Logs) permissions

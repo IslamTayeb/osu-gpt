@@ -27,13 +27,7 @@ type FailedMatch = {
 
 function normalizeTrackIds(body: MatchRequest) {
   const ids = Array.isArray(body.trackIds) ? body.trackIds : body.trackId ? [body.trackId] : [];
-  return Array.from(
-    new Set(
-      ids
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ),
-  );
+  return Array.from(new Set(ids.map((item) => item.trim()).filter(Boolean)));
 }
 
 export async function POST(request: NextRequest) {

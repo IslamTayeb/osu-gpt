@@ -10,9 +10,7 @@ type SpotifyTokenResponse = {
 
 const authBase = "https://accounts.spotify.com";
 
-export const spotifyScopes = [
-  "user-library-read",
-];
+export const spotifyScopes = ["user-library-read"];
 
 function requireEnv(name: string) {
   const value = process.env[name];

@@ -51,9 +51,13 @@ function tokenSimilarity(a: string, b: string) {
 
 function summarizeDifficulty(set: OsuBeatmapset) {
   const beatmaps = (set.beatmaps ?? []).filter((beatmap) => beatmap.mode === "osu");
-  const candidates = beatmaps.length > 0 ? beatmaps : set.beatmaps ?? [];
+  const candidates = beatmaps.length > 0 ? beatmaps : (set.beatmaps ?? []);
   if (candidates.length === 0) {
-    return { maxDifficultyRating: null, topDifficultyName: null, bpm: typeof set.bpm === "number" ? set.bpm : null };
+    return {
+      maxDifficultyRating: null,
+      topDifficultyName: null,
+      bpm: typeof set.bpm === "number" ? set.bpm : null,
+    };
   }
 
   const sorted = [...candidates].sort((a, b) => (b.difficulty_rating ?? 0) - (a.difficulty_rating ?? 0));
@@ -97,9 +101,9 @@ export async function findOsuMatches(
   track: Track,
   osuCredentials?: OsuAuthCredentials | null,
 ): Promise<FindOsuMatchesResult> {
-  const queries = Array.from(new Set([track.title.trim(), `${track.artists.join(" ")} ${track.title}`.trim()])).filter(
-    Boolean,
-  );
+  const queries = Array.from(
+    new Set([track.title.trim(), `${track.artists.join(" ")} ${track.title}`.trim()]),
+  ).filter(Boolean);
   const foundSets: OsuBeatmapset[] = [];
   const seenSetIds = new Set<number>();
 
@@ -116,9 +120,16 @@ export async function findOsuMatches(
 
   const matches = foundSets
     .filter(
-      (set) => normalizedSubstringMatch(track.title, set.title) && artistSubstringMatch(track.artists, set.artist),
+      (set) =>
+        normalizedSubstringMatch(track.title, set.title) && artistSubstringMatch(track.artists, set.artist),
     )
-    .map((set) => toMatchResult(set, 0.99, "title substring exact match (required), artist substring exact match (required)"))
+    .map((set) =>
+      toMatchResult(
+        set,
+        0.99,
+        "title substring exact match (required), artist substring exact match (required)",
+      ),
+    )
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, 5);
 

@@ -58,12 +58,7 @@ function filterTrack(
   if (!filters.query) {
     return true;
   }
-  const haystack = [
-    track.title,
-    track.artists.join(" "),
-    track.album,
-    track.sourceLabel,
-  ]
+  const haystack = [track.title, track.artists.join(" "), track.album, track.sourceLabel]
     .join(" ")
     .toLowerCase();
   return haystack.includes(filters.query);

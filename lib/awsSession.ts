@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { NextRequest } from "next/server";
 
 export const AWS_RUNTIME_COOKIE = "aws_runtime_session";
+const MISSING_SENTINEL_PREFIX = "__missing__:";
 
 export type AwsRuntimeSession = {
   accessKeyId: string;
@@ -54,18 +55,72 @@ function requireField(value: string | undefined, field: string) {
   return next;
 }
 
-export function normalizeAwsRuntimeSessionInput(input: AwsRuntimeSessionInput): AwsRuntimeSession {
+type NormalizeOptions = {
+  allowPartial?: boolean;
+};
+
+function missingSentinel(field: string) {
+  return `${MISSING_SENTINEL_PREFIX}${field}`;
+}
+
+function isMissingSentinel(value: string | undefined) {
+  return Boolean(value && value.startsWith(MISSING_SENTINEL_PREFIX));
+}
+
+function cleanResourceField(value: string | undefined, field: string, allowPartial: boolean) {
+  const next = (value ?? "").trim();
+  if (next) {
+    return next;
+  }
+  if (allowPartial) {
+    return missingSentinel(field);
+  }
+  throw new Error(`${field} is required`);
+}
+
+function displayValue(value: string) {
+  return isMissingSentinel(value) ? "" : value;
+}
+
+export function missingAwsRuntimeSessionFields(session: AwsRuntimeSession | null | undefined) {
+  if (!session) {
+    return ["accessKeyId", "secretAccessKey", "region", "batchQueue", "batchJobDefinition", "s3Bucket"];
+  }
+
+  const missing: string[] = [];
+  if (!(session.accessKeyId ?? "").trim()) missing.push("accessKeyId");
+  if (!(session.secretAccessKey ?? "").trim()) missing.push("secretAccessKey");
+  if (!(session.region ?? "").trim()) missing.push("region");
+  if (!(session.batchQueue ?? "").trim() || isMissingSentinel(session.batchQueue)) missing.push("batchQueue");
+  if (!(session.batchJobDefinition ?? "").trim() || isMissingSentinel(session.batchJobDefinition)) {
+    missing.push("batchJobDefinition");
+  }
+  if (!(session.s3Bucket ?? "").trim() || isMissingSentinel(session.s3Bucket)) missing.push("s3Bucket");
+  return missing;
+}
+
+export function isAwsRuntimeSessionConfigured(session: AwsRuntimeSession | null | undefined) {
+  return missingAwsRuntimeSessionFields(session).length === 0;
+}
+
+export function normalizeAwsRuntimeSessionInput(
+  input: AwsRuntimeSessionInput,
+  options: NormalizeOptions = {},
+): AwsRuntimeSession {
+  const allowPartial = Boolean(options.allowPartial);
   const accessKeyId = requireField(input.accessKeyId, "accessKeyId");
   const secretAccessKey = requireField(input.secretAccessKey, "secretAccessKey");
   const region = requireField(input.region, "region");
-  const batchQueue = requireField(input.batchQueue, "batchQueue");
-  const batchJobDefinition = requireField(input.batchJobDefinition, "batchJobDefinition");
-  const s3Bucket = requireField(input.s3Bucket, "s3Bucket");
+  const batchQueue = cleanResourceField(input.batchQueue, "batchQueue", allowPartial);
+  const batchJobDefinition = cleanResourceField(input.batchJobDefinition, "batchJobDefinition", allowPartial);
+  const s3Bucket = cleanResourceField(input.s3Bucket, "s3Bucket", allowPartial);
   const s3Prefix = (input.s3Prefix ?? "osu-gpt").trim() || "osu-gpt";
   const cloudWatchLogGroup = (input.cloudWatchLogGroup ?? "").trim();
   const gpuHint = (input.gpuHint ?? "").trim();
   const gpuCountPerJob =
-    typeof input.gpuCountPerJob === "number" && Number.isFinite(input.gpuCountPerJob) && input.gpuCountPerJob > 0
+    typeof input.gpuCountPerJob === "number" &&
+    Number.isFinite(input.gpuCountPerJob) &&
+    input.gpuCountPerJob > 0
       ? Math.floor(input.gpuCountPerJob)
       : undefined;
   const sessionToken = (input.sessionToken ?? "").trim();
@@ -74,7 +129,7 @@ export function normalizeAwsRuntimeSessionInput(input: AwsRuntimeSessionInput): 
   if (!isSafeToken(region)) {
     throw new Error("region includes unsupported characters");
   }
-  if (!isSafeToken(s3Bucket)) {
+  if (!isMissingSentinel(s3Bucket) && !isSafeToken(s3Bucket)) {
     throw new Error("s3Bucket includes unsupported characters");
   }
 
@@ -139,13 +194,15 @@ export function decodeAwsRuntimeSession(cookieValue: string | undefined) {
 }
 
 export function maskAwsRuntimeSession(session: AwsRuntimeSession) {
+  const missingFields = missingAwsRuntimeSessionFields(session);
   return {
-    configured: true,
+    configured: missingFields.length === 0,
+    missingFields,
     profile: session.profile,
     region: session.region,
-    batchQueue: session.batchQueue,
-    batchJobDefinition: session.batchJobDefinition,
-    s3Bucket: session.s3Bucket,
+    batchQueue: displayValue(session.batchQueue),
+    batchJobDefinition: displayValue(session.batchJobDefinition),
+    s3Bucket: displayValue(session.s3Bucket),
     s3Prefix: session.s3Prefix,
     cloudWatchLogGroup: session.cloudWatchLogGroup ?? null,
     gpuHint: session.gpuHint,

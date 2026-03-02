@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createGenerationJob } from "@/lib/jobs";
 import { readStore } from "@/lib/store";
-import { getAwsRuntimeSessionFromRequest } from "@/lib/awsSession";
+import {
+  getAwsRuntimeSessionFromRequest,
+  isAwsRuntimeSessionConfigured,
+  missingAwsRuntimeSessionFields,
+} from "@/lib/awsSession";
 import { syncHostedAwsJobs } from "@/lib/awsRuntime";
 import { sanitizeGeneratorParams, validateGeneratorParams } from "@/lib/generatorConfig";
 
@@ -9,7 +13,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   const awsSession = getAwsRuntimeSessionFromRequest(request);
-  if (awsSession) {
+  if (awsSession && isAwsRuntimeSessionConfigured(awsSession)) {
     try {
       await syncHostedAwsJobs(awsSession);
     } catch {
@@ -53,7 +57,10 @@ export async function POST(request: NextRequest) {
   const runtime = body.runtime ?? "local";
   const preset = body.preset ?? "balanced";
   const budgetCapUsd = Number.isFinite(body.budgetCapUsd) ? Number(body.budgetCapUsd) : 50;
-  const timeoutSec = Math.min(600, Math.max(300, Number.isFinite(body.timeoutSec) ? Number(body.timeoutSec) : 600));
+  const timeoutSec = Math.min(
+    600,
+    Math.max(300, Number.isFinite(body.timeoutSec) ? Number(body.timeoutSec) : 600),
+  );
   const validationErrors = validateGeneratorParams(body.generatorParams);
   if (validationErrors.length > 0) {
     return NextResponse.json(
@@ -70,6 +77,15 @@ export async function POST(request: NextRequest) {
   if (runtime === "hosted_aws" && !awsSession) {
     return NextResponse.json(
       { error: "Hosted AWS runtime is selected but no AWS session is configured." },
+      { status: 400 },
+    );
+  }
+  if (runtime === "hosted_aws" && !isAwsRuntimeSessionConfigured(awsSession)) {
+    return NextResponse.json(
+      {
+        error: "Hosted AWS runtime is incomplete. Fill missing AWS fields before queuing hosted jobs.",
+        details: missingAwsRuntimeSessionFields(awsSession).map((field) => `missing AWS field: ${field}`),
+      },
       { status: 400 },
     );
   }

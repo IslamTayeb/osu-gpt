@@ -29,7 +29,8 @@ function normalizeProfile(raw: string | undefined) {
 }
 
 function resolveRegion(raw: string | undefined) {
-  const region = (raw ?? "").trim() || process.env.AWS_REGION?.trim() || process.env.AWS_DEFAULT_REGION?.trim() || "";
+  const region =
+    (raw ?? "").trim() || process.env.AWS_REGION?.trim() || process.env.AWS_DEFAULT_REGION?.trim() || "";
   if (!region) {
     throw new Error("region is required (set Region field or AWS_REGION).");
   }
@@ -45,7 +46,9 @@ export async function POST(request: NextRequest) {
     const credentialProvider = defaultProvider({ profile });
     const credentials = await credentialProvider();
     if (!credentials.accessKeyId || !credentials.secretAccessKey) {
-      throw new Error("AWS credentials were not resolved. Login with AWS SSO or configure environment credentials first.");
+      throw new Error(
+        "AWS credentials were not resolved. Login with AWS SSO or configure environment credentials first.",
+      );
     }
 
     const resources = await autoDetectAwsRuntimeResources({
@@ -64,36 +67,45 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const gpuHint = await detectAwsBatchGpuHint({
-      region,
-      credentials: {
+    const gpuHint =
+      resources.batchQueue && resources.batchJobDefinition
+        ? await detectAwsBatchGpuHint({
+            region,
+            credentials: {
+              accessKeyId: credentials.accessKeyId,
+              secretAccessKey: credentials.secretAccessKey,
+              sessionToken: credentials.sessionToken,
+            },
+            batchQueue: resources.batchQueue,
+            batchJobDefinition: resources.batchJobDefinition,
+          })
+        : {};
+
+    const session = normalizeAwsRuntimeSessionInput(
+      {
         accessKeyId: credentials.accessKeyId,
         secretAccessKey: credentials.secretAccessKey,
         sessionToken: credentials.sessionToken,
+        profile,
+        region,
+        batchQueue: resources.batchQueue,
+        batchJobDefinition: resources.batchJobDefinition,
+        s3Bucket: resources.s3Bucket,
+        s3Prefix: resources.s3Prefix,
+        cloudWatchLogGroup: resources.cloudWatchLogGroup,
+        gpuHint: gpuHint.gpuHint,
+        gpuCountPerJob: gpuHint.gpuCountPerJob,
       },
-      batchQueue: resources.batchQueue,
-      batchJobDefinition: resources.batchJobDefinition,
-    });
-
-    const session = normalizeAwsRuntimeSessionInput({
-      accessKeyId: credentials.accessKeyId,
-      secretAccessKey: credentials.secretAccessKey,
-      sessionToken: credentials.sessionToken,
-      profile,
-      region,
-      batchQueue: resources.batchQueue,
-      batchJobDefinition: resources.batchJobDefinition,
-      s3Bucket: resources.s3Bucket,
-      s3Prefix: resources.s3Prefix,
-      cloudWatchLogGroup: resources.cloudWatchLogGroup,
-      gpuHint: gpuHint.gpuHint,
-      gpuCountPerJob: gpuHint.gpuCountPerJob,
-    });
+      { allowPartial: true },
+    );
 
     const cookieValue = encodeAwsRuntimeSession(session);
+    const missing = resources.missing;
     const response = NextResponse.json({
       ...maskAwsRuntimeSession(session),
       profile,
+      warning:
+        missing.length > 0 ? `Credentials loaded. Fill missing fields: ${missing.join(", ")}.` : undefined,
     });
     response.cookies.set({
       name: AWS_RUNTIME_COOKIE,

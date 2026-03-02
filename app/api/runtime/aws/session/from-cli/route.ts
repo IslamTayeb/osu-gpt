@@ -45,11 +45,20 @@ async function runAwsCli(args: string[]) {
     });
     return stdout.trim();
   } catch (error) {
-    if (typeof error === "object" && error && "code" in error && (error as { code?: string }).code === "ENOENT") {
-      throw new Error("AWS CLI not found. Install AWS CLI v2, then run `aws configure sso` or `aws configure`.");
+    if (
+      typeof error === "object" &&
+      error &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT"
+    ) {
+      throw new Error(
+        "AWS CLI not found. Install AWS CLI v2, then run `aws configure sso` or `aws configure`.",
+      );
     }
     const stderr =
-      typeof error === "object" && error && "stderr" in error ? String((error as { stderr?: string }).stderr ?? "").trim() : "";
+      typeof error === "object" && error && "stderr" in error
+        ? String((error as { stderr?: string }).stderr ?? "").trim()
+        : "";
     throw new Error(stderr || "AWS CLI command failed.");
   }
 }
@@ -73,7 +82,14 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as AwsFromCliBody;
     const profile = normalizeProfile(body.profile);
 
-    const raw = await runAwsCli(["configure", "export-credentials", "--profile", profile, "--format", "process"]);
+    const raw = await runAwsCli([
+      "configure",
+      "export-credentials",
+      "--profile",
+      profile,
+      "--format",
+      "process",
+    ]);
     const parsed = JSON.parse(raw) as AwsCliCredentialProcessOutput;
     if (!parsed.AccessKeyId || !parsed.SecretAccessKey) {
       throw new Error("AWS CLI did not return credentials for that profile.");
@@ -98,35 +114,45 @@ export async function POST(request: NextRequest) {
         cloudWatchLogGroup: body.cloudWatchLogGroup,
       },
     });
-    const gpuHint = await detectAwsBatchGpuHint({
-      region,
-      credentials: {
+    const gpuHint =
+      resources.batchQueue && resources.batchJobDefinition
+        ? await detectAwsBatchGpuHint({
+            region,
+            credentials: {
+              accessKeyId: parsed.AccessKeyId,
+              secretAccessKey: parsed.SecretAccessKey,
+              sessionToken: parsed.SessionToken,
+            },
+            batchQueue: resources.batchQueue,
+            batchJobDefinition: resources.batchJobDefinition,
+          })
+        : {};
+    const session = normalizeAwsRuntimeSessionInput(
+      {
         accessKeyId: parsed.AccessKeyId,
         secretAccessKey: parsed.SecretAccessKey,
         sessionToken: parsed.SessionToken,
+        profile,
+        region,
+        batchQueue: resources.batchQueue,
+        batchJobDefinition: resources.batchJobDefinition,
+        s3Bucket: resources.s3Bucket,
+        s3Prefix: resources.s3Prefix,
+        cloudWatchLogGroup: resources.cloudWatchLogGroup,
+        gpuHint: gpuHint.gpuHint,
+        gpuCountPerJob: gpuHint.gpuCountPerJob,
       },
-      batchQueue: resources.batchQueue,
-      batchJobDefinition: resources.batchJobDefinition,
-    });
-    const session = normalizeAwsRuntimeSessionInput({
-      accessKeyId: parsed.AccessKeyId,
-      secretAccessKey: parsed.SecretAccessKey,
-      sessionToken: parsed.SessionToken,
-      profile,
-      region,
-      batchQueue: resources.batchQueue,
-      batchJobDefinition: resources.batchJobDefinition,
-      s3Bucket: resources.s3Bucket,
-      s3Prefix: resources.s3Prefix,
-      cloudWatchLogGroup: resources.cloudWatchLogGroup,
-      gpuHint: gpuHint.gpuHint,
-      gpuCountPerJob: gpuHint.gpuCountPerJob,
-    });
+      { allowPartial: true },
+    );
 
     const cookieValue = encodeAwsRuntimeSession(session);
     const response = NextResponse.json({
       ...maskAwsRuntimeSession(session),
       profile,
+      warning:
+        resources.missing.length > 0
+          ? `Credentials loaded. Fill missing fields: ${resources.missing.join(", ")}.`
+          : undefined,
     });
     response.cookies.set({
       name: AWS_RUNTIME_COOKIE,

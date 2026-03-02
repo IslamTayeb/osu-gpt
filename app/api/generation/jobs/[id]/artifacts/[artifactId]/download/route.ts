@@ -30,7 +30,10 @@ export async function GET(
   if (artifact.storage === "s3") {
     const awsSession = getAwsRuntimeSessionFromRequest(request);
     if (!awsSession) {
-      return NextResponse.json({ error: "AWS runtime session is required to download hosted artifacts." }, { status: 401 });
+      return NextResponse.json(
+        { error: "AWS runtime session is required to download hosted artifacts." },
+        { status: 401 },
+      );
     }
     if (!artifact.s3Bucket || !artifact.s3Key) {
       return NextResponse.json({ error: "Hosted artifact is missing S3 coordinates." }, { status: 500 });
