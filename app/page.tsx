@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCcw } from "lucide-react";
 import type { GenerationJob, SpotifyImportStatus, Track, TrackMatchSnapshot } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { chunkArray, inferFilename } from "@/lib/homeUi";
 import { AuthShell } from "@/components/workspace/auth-shell";
 import { FiltersPane } from "@/components/workspace/filters-pane";
 import { LibraryPane } from "@/components/workspace/library-pane";
@@ -20,12 +19,25 @@ import type {
 import { useLibrarySelection } from "@/hooks/use-library-selection";
 import { useGenerationProfileConfig } from "@/hooks/use-generation-profile-config";
 import { useRuntimeActions } from "@/hooks/use-runtime-actions";
+import { useMatchWorkflow } from "@/hooks/use-match-workflow";
+import { useGenerationWorkflow } from "@/hooks/use-generation-workflow";
+import { useSelectionDerived } from "@/hooks/use-selection-derived";
+import { useWorkspaceDataEffects } from "@/hooks/use-workspace-data-effects";
+import { useSpotifyImportWorkflow } from "@/hooks/use-spotify-import-workflow";
 
 const defaultImportStatus: SpotifyImportStatus = { status: "idle" };
 
 type MatchFilter = "all" | "matched" | "unmatched" | "generated";
 type ProviderFilter = "all" | Track["provider"];
 type SourceFilter = "all" | Track["source"];
+type TrackQueryState = {
+  page: number;
+  pageSize: number;
+  providerFilter: ProviderFilter;
+  sourceFilter: SourceFilter;
+  matchFilter: MatchFilter;
+  debouncedQuery: string;
+};
 
 export default function Home() {
   const [spotifyConnected, setSpotifyConnected] = useState(false);
@@ -82,9 +94,7 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [lastMatchSummary, setLastMatchSummary] = useState<BatchMatchResponse["summary"] | null>(null);
 
-  const autoImportAttemptedRef = useRef(false);
-  const hydratedRef = useRef(false);
-  const lastImportStateRef = useRef<SpotifyImportStatus["status"]>("idle");
+  const debouncedQueryRef = useRef("");
   const libraryScrollRef = useRef<HTMLDivElement | null>(null);
 
   const {
@@ -134,77 +144,19 @@ export default function Home() {
     [jobs],
   );
 
-  const selectionStats = useMemo(() => {
-    let matched = 0;
-    let unmatched = 0;
-    let failed = 0;
-    let generated = 0;
-
-    for (const trackId of selectedTrackIds) {
-      const snapshot = matchSnapshots[trackId];
-      if (snapshot?.error) {
-        failed += 1;
-      } else if (snapshot && snapshot.matches.length > 0) {
-        matched += 1;
-      } else if (snapshot && snapshot.matches.length === 0) {
-        unmatched += 1;
-      }
-      if (completedTrackIdSet.has(trackId)) {
-        generated += 1;
-      }
-    }
-
-    return {
-      total: selectedTrackIds.length,
-      matched,
-      unmatched,
-      failed,
-      generated,
-    };
-  }, [selectedTrackIds, matchSnapshots, completedTrackIdSet]);
-
-  const unmatchedSelectedIds = useMemo(
-    () =>
-      selectedTrackIds.filter((trackId) => {
-        const snapshot = matchSnapshots[trackId];
-        return Boolean(snapshot && !snapshot.error && snapshot.matches.length === 0);
-      }),
-    [selectedTrackIds, matchSnapshots],
-  );
-
-  const matchedSelected = useMemo(
-    () =>
-      selectedTrackIds
-        .map((trackId) => ({
-          track: trackById.get(trackId),
-          snapshot: matchSnapshots[trackId],
-        }))
-        .filter((entry) => entry.track && entry.snapshot && entry.snapshot.matches.length > 0),
-    [selectedTrackIds, trackById, matchSnapshots],
-  );
-
-  const unmatchedTopHits = useMemo(
-    () =>
-      selectedTrackIds
-        .map((trackId) => ({
-          track: trackById.get(trackId),
-          snapshot: matchSnapshots[trackId],
-        }))
-        .filter(
-          (entry) =>
-            entry.track && entry.snapshot && entry.snapshot.matches.length === 0 && entry.snapshot.topHit,
-        ),
-    [selectedTrackIds, trackById, matchSnapshots],
-  );
+  const { selectionStats, unmatchedSelectedIds, matchedSelected, unmatchedTopHits } = useSelectionDerived({
+    selectedTrackIds,
+    matchSnapshots,
+    completedTrackIdSet,
+    trackById,
+  });
 
   const fetchSession = useCallback(async () => {
     const response = await fetch("/api/session", { cache: "no-store" });
     const data = (await response.json()) as SessionResponse;
     setSpotifyConnected(Boolean(data.spotifyConnected));
     setSpotdlAckAt(data.spotdlAcknowledgedAt ?? null);
-    if (data.importStatus) {
-      setImportStatus(data.importStatus);
-    }
+    setImportStatus(data.importStatus ?? defaultImportStatus);
 
     const hostedAws = data.runtime?.hostedAws;
     if (hostedAws) {
@@ -230,37 +182,48 @@ export default function Home() {
     }
   }, []);
 
-  const fetchTracks = useCallback(async () => {
-    setTracksLoading(true);
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-        provider: providerFilter,
-        source: sourceFilter,
-        match: matchFilter,
-      });
-      if (debouncedQuery) {
-        params.set("query", debouncedQuery);
-      }
+  const fetchTracks = useCallback(
+    async (overrides?: Partial<TrackQueryState>) => {
+      const nextPage = overrides?.page ?? page;
+      const nextPageSize = overrides?.pageSize ?? pageSize;
+      const nextProviderFilter = overrides?.providerFilter ?? providerFilter;
+      const nextSourceFilter = overrides?.sourceFilter ?? sourceFilter;
+      const nextMatchFilter = overrides?.matchFilter ?? matchFilter;
+      const nextDebouncedQuery = overrides?.debouncedQuery ?? debouncedQuery;
 
-      const response = await fetch(`/api/library/tracks?${params.toString()}`, { cache: "no-store" });
-      const data = (await response.json()) as TracksResponse;
-      setTracks(data.tracks ?? []);
-      setMatchSnapshots((previous) => ({ ...previous, ...(data.matchesByTrackId ?? {}) }));
-      setTotalTracks(data.totalTracks ?? 0);
-      setTracksTotal(data.pagination?.total ?? 0);
-      setTotalPages(data.pagination?.totalPages ?? 1);
-      setVisibleStart(data.pagination?.start ?? 0);
-      setVisibleEnd(data.pagination?.end ?? 0);
-      if (data.pagination?.page && data.pagination.page !== page) {
-        setPage(data.pagination.page);
+      setTracksLoading(true);
+      try {
+        const params = new URLSearchParams({
+          page: String(nextPage),
+          pageSize: String(nextPageSize),
+          provider: nextProviderFilter,
+          source: nextSourceFilter,
+          match: nextMatchFilter,
+        });
+        if (nextDebouncedQuery) {
+          params.set("query", nextDebouncedQuery);
+        }
+
+        const response = await fetch(`/api/library/tracks?${params.toString()}`, { cache: "no-store" });
+        const data = (await response.json()) as TracksResponse;
+        const nextTracks = data.tracks ?? [];
+        setTracks(nextTracks);
+        setMatchSnapshots((previous) => ({ ...previous, ...(data.matchesByTrackId ?? {}) }));
+        setTotalTracks(data.totalTracks ?? 0);
+        setTracksTotal(data.pagination?.total ?? 0);
+        setTotalPages(data.pagination?.totalPages ?? 1);
+        setVisibleStart(data.pagination?.start ?? 0);
+        setVisibleEnd(data.pagination?.end ?? 0);
+        if (data.pagination?.page && data.pagination.page !== nextPage) {
+          setPage(data.pagination.page);
+        }
+        setTracksLoadedOnce(true);
+      } finally {
+        setTracksLoading(false);
       }
-      setTracksLoadedOnce(true);
-    } finally {
-      setTracksLoading(false);
-    }
-  }, [page, pageSize, providerFilter, sourceFilter, matchFilter, debouncedQuery]);
+    },
+    [page, pageSize, providerFilter, sourceFilter, matchFilter, debouncedQuery],
+  );
 
   const fetchJobs = useCallback(async () => {
     setJobsLoading(true);
@@ -284,127 +247,117 @@ export default function Home() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setDebouncedQuery(query.trim());
+      const nextQuery = query.trim();
+      if (debouncedQueryRef.current === nextQuery) {
+        return;
+      }
+      debouncedQueryRef.current = nextQuery;
+      setDebouncedQuery(nextQuery);
+      setPage(1);
+      void fetchTracks({ debouncedQuery: nextQuery, page: 1 });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [fetchTracks, query]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedQuery, providerFilter, sourceFilter, matchFilter, pageSize]);
+  useWorkspaceDataEffects({
+    fetchSession,
+    fetchJobs,
+    fetchImportStatus,
+    fetchTracks,
+    hasActiveJobs,
+    importStatusState: importStatus.status,
+    tracks,
+    setTrackCacheById,
+    setBootstrapping,
+  });
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        await Promise.all([fetchSession(), fetchJobs(), fetchImportStatus(), fetchTracks()]);
-      } finally {
-        hydratedRef.current = true;
-        setBootstrapping(false);
+  const handleProviderFilterChange = useCallback(
+    (next: ProviderFilter) => {
+      if (next === providerFilter) {
+        return;
       }
-    })();
-  }, [fetchSession, fetchJobs, fetchImportStatus, fetchTracks]);
-
-  useEffect(() => {
-    if (!hydratedRef.current) {
-      return;
-    }
-    void fetchTracks();
-  }, [fetchTracks]);
-
-  useEffect(() => {
-    if (!hydratedRef.current) {
-      return;
-    }
-
-    const timer = setInterval(() => {
-      void (async () => {
-        const status = await fetchImportStatus();
-        if (hasActiveJobs) {
-          await fetchJobs();
-        }
-        if (status.status === "running") {
-          await fetchTracks();
-        }
-      })();
-    }, 2500);
-
-    return () => clearInterval(timer);
-  }, [fetchJobs, fetchImportStatus, fetchTracks, hasActiveJobs]);
-
-  useEffect(() => {
-    const previous = lastImportStateRef.current;
-    if (importStatus.status === "completed" && previous !== "completed") {
-      void fetchTracks();
-      void fetchSession();
-    }
-    lastImportStateRef.current = importStatus.status;
-  }, [importStatus.status, fetchTracks, fetchSession]);
-
-  useEffect(() => {
-    setTrackCacheById((previous) => {
-      const next = { ...previous };
-      for (const track of tracks) {
-        next[track.id] = track;
-      }
-      return next;
-    });
-  }, [tracks]);
-
-  const importSpotify = useCallback(
-    async (silent = false) => {
-      setBusy(true);
-      if (!silent) {
-        setNotice("");
-      }
-      setError("");
-      try {
-        clearSelection();
-        setTracks([]);
-        setTrackCacheById({});
-        setMatchSnapshots({});
-        setJobs([]);
-        setTracksTotal(0);
-        setTotalTracks(0);
-        setVisibleStart(0);
-        setVisibleEnd(0);
-        setTotalPages(1);
-        setPage(1);
-
-        const response = await fetch("/api/library/spotify/import", { method: "POST" });
-        const body = (await response.json()) as { error?: string };
-        if (!response.ok) {
-          throw new Error(body.error ?? "Import failed");
-        }
-        if (!silent) {
-          setNotice("Liked songs import started from a clean cache.");
-        }
-        await Promise.all([fetchImportStatus(), fetchTracks()]);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Import failed");
-      } finally {
-        setBusy(false);
-      }
+      setProviderFilter(next);
+      setPage(1);
+      void fetchTracks({ providerFilter: next, page: 1 });
     },
-    [clearSelection, fetchImportStatus, fetchTracks],
+    [fetchTracks, providerFilter],
   );
 
-  useEffect(() => {
-    if (!hydratedRef.current || !spotifyConnected || autoImportAttemptedRef.current) {
-      return;
-    }
-    if (typeof window === "undefined") {
-      return;
-    }
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("spotify") !== "connected") {
-      return;
-    }
+  const handleSourceFilterChange = useCallback(
+    (next: SourceFilter) => {
+      if (next === sourceFilter) {
+        return;
+      }
+      setSourceFilter(next);
+      setPage(1);
+      void fetchTracks({ sourceFilter: next, page: 1 });
+    },
+    [fetchTracks, sourceFilter],
+  );
 
-    autoImportAttemptedRef.current = true;
-    void importSpotify(true);
-    url.searchParams.delete("spotify");
-    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [spotifyConnected, importSpotify]);
+  const handleMatchFilterChange = useCallback(
+    (next: MatchFilter) => {
+      if (next === matchFilter) {
+        return;
+      }
+      setMatchFilter(next);
+      setPage(1);
+      void fetchTracks({ matchFilter: next, page: 1 });
+    },
+    [fetchTracks, matchFilter],
+  );
+
+  const handlePageSizeChange = useCallback(
+    (next: number) => {
+      const nextPageSize = Math.max(20, Number.isFinite(next) ? next : 60);
+      if (nextPageSize === pageSize) {
+        return;
+      }
+      setPageSize(nextPageSize);
+      setPage(1);
+      void fetchTracks({ pageSize: nextPageSize, page: 1 });
+    },
+    [fetchTracks, pageSize],
+  );
+
+  const handlePrevPage = useCallback(() => {
+    const nextPage = Math.max(1, page - 1);
+    if (nextPage === page) {
+      return;
+    }
+    setPage(nextPage);
+    void fetchTracks({ page: nextPage });
+  }, [fetchTracks, page]);
+
+  const handleNextPage = useCallback(() => {
+    const nextPage = Math.min(totalPages, page + 1);
+    if (nextPage === page) {
+      return;
+    }
+    setPage(nextPage);
+    void fetchTracks({ page: nextPage });
+  }, [fetchTracks, page, totalPages]);
+
+  const { importSpotify } = useSpotifyImportWorkflow({
+    spotifyConnected,
+    bootstrapping,
+    clearSelection,
+    fetchImportStatus,
+    fetchTracks,
+    setBusy,
+    setError,
+    setNotice,
+    setTracks,
+    setTrackCacheById,
+    setMatchSnapshots,
+    setJobs,
+    setTracksTotal,
+    setTotalTracks,
+    setVisibleStart,
+    setVisibleEnd,
+    setTotalPages,
+    setPage,
+  });
 
   const {
     acknowledgeSpotdl,
@@ -461,181 +414,30 @@ export default function Home() {
     awsCloudWatchLogGroup,
   });
 
-  async function runBatchMatch() {
-    if (selectedTrackIds.length === 0) {
-      setError("Select tracks first.");
-      return;
-    }
+  const { runBatchMatch } = useMatchWorkflow({
+    selectedTrackIds,
+    setMatching,
+    setError,
+    setNotice,
+    setMatchSnapshots,
+    setLastMatchSummary,
+    fetchTracks,
+  });
 
-    const chunks = chunkArray(selectedTrackIds, 10);
-    let matchedCount = 0;
-    let unmatchedCount = 0;
-    let errorCount = 0;
-
-    setMatching(true);
-    setError("");
-    setNotice("");
-
-    for (const chunk of chunks) {
-      try {
-        const response = await fetch("/api/osu/match", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ trackIds: chunk }),
-        });
-        const body = (await response.json()) as BatchMatchResponse & { error?: string };
-        if (!response.ok) {
-          throw new Error(body.error ?? "Match failed");
-        }
-
-        matchedCount += body.summary?.matchedCount ?? 0;
-        unmatchedCount += body.summary?.unmatchedCount ?? 0;
-        errorCount += body.summary?.errorCount ?? 0;
-
-        const now = new Date().toISOString();
-        setMatchSnapshots((previous) => {
-          const next = { ...previous };
-          for (const [trackId, result] of Object.entries(body.trackResults ?? {})) {
-            next[trackId] = {
-              trackId,
-              matches: result.matches ?? [],
-              topHit: result.topHit ?? null,
-              strongMatch: Boolean(result.strongMatch),
-              autoGenerate: Boolean(result.autoGenerate),
-              updatedAt: now,
-              error: result.error,
-            };
-          }
-          return next;
-        });
-      } catch {
-        errorCount += chunk.length;
-        const now = new Date().toISOString();
-        setMatchSnapshots((previous) => {
-          const next = { ...previous };
-          for (const trackId of chunk) {
-            next[trackId] = {
-              trackId,
-              matches: [],
-              topHit: null,
-              strongMatch: false,
-              autoGenerate: false,
-              updatedAt: now,
-              error: "Match failed for this chunk",
-            };
-          }
-          return next;
-        });
-      } finally {
-      }
-    }
-
-    setLastMatchSummary({
-      total: selectedTrackIds.length,
-      matchedCount,
-      unmatchedCount,
-      errorCount,
-    });
-    setNotice("Match scan completed incrementally.");
-    setMatching(false);
-    await fetchTracks();
-  }
-
-  async function queueGeneration(trackIds: string[]) {
-    if (trackIds.length === 0) {
-      setError("No tracks selected for generation.");
-      return;
-    }
-    if (!spotdlAckAt) {
-      setError("Acknowledge downloader usage before generation.");
-      return;
-    }
-    if (runtime === "hosted_aws" && !awsSessionStatus.configured) {
-      setError("Save Hosted AWS session settings before queuing hosted jobs.");
-      return;
-    }
-    if (budgetCapUsd > 50 && !window.confirm("Budget cap is above $50. Continue?")) {
-      return;
-    }
-
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      const response = await fetch("/api/generation/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          trackIds,
-          runtime,
-          preset,
-          timeoutSec,
-          budgetCapUsd,
-          generatorParams,
-        }),
-      });
-      const body = (await response.json()) as {
-        error?: string;
-        details?: string[];
-        jobs?: GenerationJob[];
-        job?: GenerationJob;
-      };
-      if (!response.ok) {
-        if (body.details && body.details.length > 0) {
-          throw new Error(`${body.error ?? "Could not create generation job(s)"} ${body.details.join(" ")}`);
-        }
-        throw new Error(body.error ?? "Could not create generation job(s)");
-      }
-
-      const createdCount = body.jobs?.length ?? (body.job ? 1 : 0);
-      setNotice(`Queued ${createdCount} job${createdCount === 1 ? "" : "s"}.`);
-      await fetchJobs();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Generation failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function downloadZip() {
-    if (selectedTrackIds.length === 0) {
-      setError("Select tracks to export.");
-      return;
-    }
-
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      const response = await fetch("/api/generation/export-zip", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trackIds: selectedTrackIds }),
-      });
-
-      if (!response.ok) {
-        const body = (await response.json()) as { error?: string };
-        throw new Error(body.error ?? "Export failed");
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const filename = inferFilename(response.headers.get("content-disposition"));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-
-      setNotice("ZIP export downloaded.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Export failed");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const { queueGeneration, downloadZip } = useGenerationWorkflow({
+    selectedTrackIds,
+    spotdlAckAt,
+    runtime,
+    awsConfigured: awsSessionStatus.configured,
+    preset,
+    timeoutSec,
+    budgetCapUsd,
+    generatorParams,
+    setBusy,
+    setError,
+    setNotice,
+    fetchJobs,
+  });
 
   const showLibrarySkeleton =
     (!tracksLoadedOnce && (tracksLoading || bootstrapping)) || (bootstrapping && tracks.length === 0);
@@ -732,19 +534,21 @@ export default function Home() {
             query={query}
             onQueryChange={setQuery}
             providerFilter={providerFilter}
-            onProviderFilterChange={setProviderFilter as (next: "all" | "spotify" | "apple") => void}
+            onProviderFilterChange={handleProviderFilterChange as (next: "all" | "spotify" | "apple") => void}
             sourceFilter={sourceFilter}
-            onSourceFilterChange={setSourceFilter as (next: "all" | "liked" | "playlist" | "library") => void}
+            onSourceFilterChange={
+              handleSourceFilterChange as (next: "all" | "liked" | "playlist" | "library") => void
+            }
             matchFilter={matchFilter}
             onMatchFilterChange={
-              setMatchFilter as (next: "all" | "matched" | "unmatched" | "generated") => void
+              handleMatchFilterChange as (next: "all" | "matched" | "unmatched" | "generated") => void
             }
             pageSize={pageSize}
-            onPageSizeChange={setPageSize}
+            onPageSizeChange={handlePageSizeChange}
             page={page}
             totalPages={totalPages}
-            onPrevPage={() => setPage((previous) => Math.max(1, previous - 1))}
-            onNextPage={() => setPage((previous) => Math.min(totalPages, previous + 1))}
+            onPrevPage={handlePrevPage}
+            onNextPage={handleNextPage}
             visibleStart={visibleStart}
             visibleEnd={visibleEnd}
             tracksTotal={tracksTotal}
