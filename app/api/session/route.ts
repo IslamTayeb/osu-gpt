@@ -12,9 +12,13 @@ export async function GET() {
   const cookieStore = await cookies();
   const awsSession = decodeAwsRuntimeSession(cookieStore.get(AWS_RUNTIME_COOKIE)?.value);
   const osuSession = decodeOsuRuntimeSession(cookieStore.get(OSU_RUNTIME_COOKIE)?.value);
+  const envOsuClientId = process.env.OSU_CLIENT_ID?.trim() ?? "";
+  const envOsuClientSecret = process.env.OSU_CLIENT_SECRET?.trim() ?? "";
+  const envOsuConfigured = Boolean(envOsuClientId && envOsuClientSecret);
   const store = readStore();
   const spotifyConnected = Boolean(spotify?.accessToken);
   const importStatus = store.settings.spotifyImport ?? { status: "idle" as const };
+  const maskedEnvClientIdHint = envOsuClientId.length > 2 ? `${envOsuClientId.slice(0, 2)}****` : "****";
 
   return NextResponse.json({
     spotifyConnected,
@@ -25,7 +29,11 @@ export async function GET() {
     },
     runtime: {
       hostedAws: awsSession ? maskAwsRuntimeSession(awsSession) : { configured: false },
-      osu: osuSession ? maskOsuRuntimeSession(osuSession) : { configured: false },
+      osu: osuSession
+        ? { ...maskOsuRuntimeSession(osuSession), source: "session" as const }
+        : envOsuConfigured
+          ? { configured: true, clientIdHint: maskedEnvClientIdHint, source: "env" as const }
+          : { configured: false },
     },
     trackCount: store.tracks.length,
     importStatus,

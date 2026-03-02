@@ -49,6 +49,7 @@ type OsuSessionStatus = {
   configured: boolean;
   clientIdHint?: string;
   updatedAt?: string;
+  source?: "session" | "env";
 };
 
 type SessionResponse = {
@@ -1180,6 +1181,9 @@ export default function Home() {
                       </details>
                       {osuSessionStatus.clientIdHint ? (
                         <p className="tiny muted">Active client: {osuSessionStatus.clientIdHint}</p>
+                      ) : null}
+                      {osuSessionStatus.configured && osuSessionStatus.source === "env" ? (
+                        <p className="tiny muted">Using server `.env` credentials. Restart dev server after editing `.env` values.</p>
                       ) : null}
                       <Input
                         placeholder="osu OAuth Client ID"
