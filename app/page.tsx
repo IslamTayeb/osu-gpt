@@ -2,13 +2,22 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent as ReactChangeEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   AlertTriangle,
   Calendar,
   ChevronLeft,
   ChevronRight,
   Circle,
+  Cpu,
   Crosshair,
   Download,
   Eye,
@@ -22,7 +31,6 @@ import {
   Sparkles,
   Tags,
   Target,
-  User,
 } from "lucide-react";
 import type {
   GenerationJob,
@@ -52,7 +60,10 @@ type HostedAwsSessionStatus = {
   s3Bucket?: string;
   s3Prefix?: string;
   cloudWatchLogGroup?: string | null;
+  gpuHint?: string;
+  gpuCountPerJob?: number;
   accessKeyIdHint?: string;
+  profile?: string;
   updatedAt?: string;
 };
 
@@ -118,6 +129,21 @@ type MatchFilter = "all" | "matched" | "unmatched" | "generated";
 type ProviderFilter = "all" | Track["provider"];
 type SourceFilter = "all" | Track["source"];
 
+type SelectionRect = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+type LibraryMarqueeSession = {
+  pointerId: number;
+  originX: number;
+  originY: number;
+  moved: boolean;
+  clickedTrackId: string | null;
+};
+
 function msToClock(ms: number) {
   const total = Math.floor(ms / 1000);
   const m = Math.floor(total / 60);
@@ -167,6 +193,47 @@ function librarySkeletonItems(count: number) {
   return Array.from({ length: count }, (_, index) => index);
 }
 
+const descriptorOptions = [
+  "jump aim",
+  "high bpm",
+  "bursty",
+  "streams",
+  "stamina",
+  "flow aim",
+  "finger control",
+  "aim control",
+  "technical",
+  "alt",
+  "precision",
+  "clean",
+  "reading",
+  "difficulty spike",
+  "comfortable",
+  "distance snapped",
+  "old style",
+  "triples",
+  "close spacing",
+  "vocal rhythm",
+  "grid based",
+  "oibon",
+  "large jumps",
+  "side to side jumps",
+];
+
+const negativeDescriptorOptions = [
+  "slider spam",
+  "awkward jumps",
+  "visual clutter",
+  "rhythm gimmick",
+  "overmapped",
+  "underweighted patterns",
+  "unreadable spacing",
+  "excessive SV gimmick",
+];
+
+const inContextOptions = ["NONE", "GD", "NO_HS", "MAP", "TIMING"];
+const outputTypeOptions = ["MAP", "TIMING", "HITSOUND"];
+
 export default function Home() {
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [spotdlAckAt, setSpotdlAckAt] = useState<string | null>(null);
@@ -190,19 +257,20 @@ export default function Home() {
   const [visibleEnd, setVisibleEnd] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
-  const [runtime, setRuntime] = useState<"local" | "hosted_aws">("local");
+  const [runtime, setRuntime] = useState<"local" | "hosted_aws">("hosted_aws");
   const [preset, setPreset] = useState<"quick" | "balanced" | "high_quality">("balanced");
   const [timeoutSec, setTimeoutSec] = useState(600);
   const [budgetCapUsd, setBudgetCapUsd] = useState(50);
 
-  const [mapperPresetId, setMapperPresetId] = useState("none");
-  const [mapTypePresetId, setMapTypePresetId] = useState("none");
+  const [stylePresetId, setStylePresetId] = useState("none");
+  const [mapperChoiceId, setMapperChoiceId] = useState("none");
   const [generatorParams, setGeneratorParams] = useState<GeneratorParams>({ ...generatorParamTemplate });
 
   const [awsSessionStatus, setAwsSessionStatus] = useState<HostedAwsSessionStatus>({ configured: false });
   const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
   const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
   const [awsSessionToken, setAwsSessionToken] = useState("");
+  const [awsProfile, setAwsProfile] = useState("default");
   const [awsRegion, setAwsRegion] = useState("");
   const [awsBatchQueue, setAwsBatchQueue] = useState("");
   const [awsBatchJobDefinition, setAwsBatchJobDefinition] = useState("");
@@ -222,7 +290,6 @@ export default function Home() {
 
   const [busy, setBusy] = useState(false);
   const [matching, setMatching] = useState(false);
-  const [matchingTrackIds, setMatchingTrackIds] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [lastMatchSummary, setLastMatchSummary] = useState<BatchMatchResponse["summary"] | null>(null);
@@ -230,6 +297,9 @@ export default function Home() {
   const autoImportAttemptedRef = useRef(false);
   const hydratedRef = useRef(false);
   const lastImportStateRef = useRef<SpotifyImportStatus["status"]>("idle");
+  const libraryScrollRef = useRef<HTMLDivElement | null>(null);
+  const libraryMarqueeRef = useRef<LibraryMarqueeSession | null>(null);
+  const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null);
 
   const trackById = useMemo(() => {
     const map = new Map<string, Track>();
@@ -240,15 +310,42 @@ export default function Home() {
   }, [trackCacheById]);
 
   const selectedTrackSet = useMemo(() => new Set(selectedTrackIds), [selectedTrackIds]);
-  const matchingTrackSet = useMemo(() => new Set(matchingTrackIds), [matchingTrackIds]);
 
-  const selectedMapperPreset = useMemo(
-    () => mapperStylePresets.find((presetOption) => presetOption.id === mapperPresetId) ?? null,
-    [mapperPresetId],
+  const stylePresetOptions = useMemo(
+    () => [
+      {
+        id: "none",
+        label: "No style preset",
+        description: "No auto style changes. Keep current parameters.",
+        descriptors: [] as string[],
+        defaults: {} as Partial<GeneratorParams>,
+      },
+      ...mapTypePresets.map((presetOption) => ({
+        id: `type:${presetOption.id}`,
+        label: presetOption.label,
+        description: presetOption.description,
+        descriptors: presetOption.descriptors,
+        defaults: presetOption.defaults as Partial<GeneratorParams>,
+      })),
+      ...mapperStylePresets.map((presetOption) => ({
+        id: `mapper:${presetOption.id}`,
+        label: `${presetOption.label} (example style)`,
+        description: presetOption.description,
+        descriptors: presetOption.descriptors,
+        defaults: {} as Partial<GeneratorParams>,
+      })),
+    ],
+    [],
   );
-  const selectedMapTypePreset = useMemo(
-    () => mapTypePresets.find((presetOption) => presetOption.id === mapTypePresetId) ?? null,
-    [mapTypePresetId],
+
+  const selectedStylePreset = useMemo(
+    () => stylePresetOptions.find((presetOption) => presetOption.id === stylePresetId) ?? stylePresetOptions[0],
+    [stylePresetId, stylePresetOptions],
+  );
+
+  const selectedMapperOption = useMemo(
+    () => mapperStylePresets.find((presetOption) => presetOption.id === mapperChoiceId) ?? null,
+    [mapperChoiceId],
   );
 
   const completedTrackIdSet = useMemo(
@@ -334,6 +431,7 @@ export default function Home() {
     if (hostedAws) {
       setAwsSessionStatus(hostedAws);
       if (hostedAws.configured) {
+        setAwsProfile((prev) => hostedAws.profile || prev || "default");
         setAwsRegion((prev) => prev || hostedAws.region || "");
         setAwsBatchQueue((prev) => prev || hostedAws.batchQueue || "");
         setAwsBatchJobDefinition((prev) => prev || hostedAws.batchJobDefinition || "");
@@ -442,7 +540,7 @@ export default function Home() {
     const timer = setInterval(() => {
       void (async () => {
         const status = await fetchImportStatus();
-        if (hasActiveJobs || runtime === "hosted_aws") {
+        if (hasActiveJobs) {
           await fetchJobs();
         }
         if (status.status === "running") {
@@ -452,7 +550,7 @@ export default function Home() {
     }, 2500);
 
     return () => clearInterval(timer);
-  }, [fetchJobs, fetchImportStatus, fetchTracks, hasActiveJobs, runtime]);
+  }, [fetchJobs, fetchImportStatus, fetchTracks, hasActiveJobs]);
 
   useEffect(() => {
     const previous = lastImportStateRef.current;
@@ -609,6 +707,7 @@ export default function Home() {
           accessKeyId: awsAccessKeyId,
           secretAccessKey: awsSecretAccessKey,
           sessionToken: awsSessionToken,
+          profile: awsProfile,
           region: awsRegion,
           batchQueue: awsBatchQueue,
           batchJobDefinition: awsBatchJobDefinition,
@@ -629,6 +728,90 @@ export default function Home() {
       await fetchSession();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save AWS session.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadAwsRuntimeSessionFromCli() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/runtime/aws/session/from-cli", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile: awsProfile,
+          region: awsRegion,
+          batchQueue: awsBatchQueue,
+          batchJobDefinition: awsBatchJobDefinition,
+          s3Bucket: awsS3Bucket,
+          s3Prefix: awsS3Prefix,
+          cloudWatchLogGroup: awsCloudWatchLogGroup,
+        }),
+      });
+      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string };
+      if (!response.ok) {
+        throw new Error(body.error ?? "Failed to load AWS session from CLI.");
+      }
+
+      setAwsSessionStatus(body);
+      setAwsAccessKeyId("");
+      setAwsSecretAccessKey("");
+      setAwsSessionToken("");
+      if (body.region) setAwsRegion(body.region);
+      if (body.batchQueue) setAwsBatchQueue(body.batchQueue);
+      if (body.batchJobDefinition) setAwsBatchJobDefinition(body.batchJobDefinition);
+      if (body.s3Bucket) setAwsS3Bucket(body.s3Bucket);
+      if (body.s3Prefix) setAwsS3Prefix(body.s3Prefix);
+      if (body.cloudWatchLogGroup) setAwsCloudWatchLogGroup(body.cloudWatchLogGroup);
+      setNotice(`Hosted AWS session loaded from AWS CLI profile ${(body.profile ?? awsProfile) || "default"}.`);
+      await fetchSession();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load AWS session from CLI.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function autoLoadAwsRuntimeSession() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/runtime/aws/session/auto", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile: awsProfile,
+          region: awsRegion,
+          batchQueue: awsBatchQueue,
+          batchJobDefinition: awsBatchJobDefinition,
+          s3Bucket: awsS3Bucket,
+          s3Prefix: awsS3Prefix,
+          cloudWatchLogGroup: awsCloudWatchLogGroup,
+        }),
+      });
+      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string };
+      if (!response.ok) {
+        throw new Error(body.error ?? "Failed to auto-load AWS session.");
+      }
+
+      setAwsSessionStatus(body);
+      setAwsAccessKeyId("");
+      setAwsSecretAccessKey("");
+      setAwsSessionToken("");
+      if (body.region) setAwsRegion(body.region);
+      if (body.batchQueue) setAwsBatchQueue(body.batchQueue);
+      if (body.batchJobDefinition) setAwsBatchJobDefinition(body.batchJobDefinition);
+      if (body.s3Bucket) setAwsS3Bucket(body.s3Bucket);
+      if (body.s3Prefix) setAwsS3Prefix(body.s3Prefix);
+      if (body.cloudWatchLogGroup) setAwsCloudWatchLogGroup(body.cloudWatchLogGroup);
+      setNotice(`Hosted AWS session auto-loaded via AWS SDK chain (${(body.profile ?? awsProfile) || "default"}).`);
+      await fetchSession();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to auto-load AWS session.");
     } finally {
       setBusy(false);
     }
@@ -696,42 +879,160 @@ export default function Home() {
     setSelectedTrackIds([]);
   }
 
+  function rectFromPoints(originX: number, originY: number, nextX: number, nextY: number): SelectionRect {
+    const left = Math.min(originX, nextX);
+    const top = Math.min(originY, nextY);
+    const width = Math.abs(nextX - originX);
+    const height = Math.abs(nextY - originY);
+    return { left, top, width, height };
+  }
+
+  function intersectsRect(a: SelectionRect, b: SelectionRect) {
+    return a.left <= b.left + b.width && a.left + a.width >= b.left && a.top <= b.top + b.height && a.top + a.height >= b.top;
+  }
+
+  function eventToLibraryPoint(event: ReactPointerEvent<HTMLDivElement>) {
+    const root = libraryScrollRef.current;
+    if (!root) {
+      return null;
+    }
+    const rootRect = root.getBoundingClientRect();
+    return {
+      x: event.clientX - rootRect.left + root.scrollLeft,
+      y: event.clientY - rootRect.top + root.scrollTop,
+    };
+  }
+
+  function selectedIdsFromRect(rect: SelectionRect) {
+    const root = libraryScrollRef.current;
+    if (!root) {
+      return [];
+    }
+    const rootRect = root.getBoundingClientRect();
+    const next = new Set<string>();
+    const cards = root.querySelectorAll<HTMLElement>("[data-track-id]");
+    cards.forEach((card) => {
+      const trackId = card.dataset.trackId;
+      if (!trackId) return;
+      const cardRect = card.getBoundingClientRect();
+      const cardBounds: SelectionRect = {
+        left: cardRect.left - rootRect.left + root.scrollLeft,
+        top: cardRect.top - rootRect.top + root.scrollTop,
+        width: cardRect.width,
+        height: cardRect.height,
+      };
+      if (intersectsRect(rect, cardBounds)) {
+        next.add(trackId);
+      }
+    });
+    return Array.from(next);
+  }
+
+  function handleLibraryPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    const point = eventToLibraryPoint(event);
+    if (!point) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (target.closest("input,button,a,select,textarea,label,[data-no-marquee='true']")) {
+      return;
+    }
+
+    const clickedCard = target.closest<HTMLElement>("[data-track-id]");
+    libraryMarqueeRef.current = {
+      pointerId: event.pointerId,
+      originX: point.x,
+      originY: point.y,
+      moved: false,
+      clickedTrackId: clickedCard?.dataset.trackId ?? null,
+    };
+    setSelectionRect({ left: point.x, top: point.y, width: 0, height: 0 });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function handleLibraryPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const active = libraryMarqueeRef.current;
+    if (!active || active.pointerId !== event.pointerId) {
+      return;
+    }
+    const point = eventToLibraryPoint(event);
+    if (!point) {
+      return;
+    }
+    const rect = rectFromPoints(active.originX, active.originY, point.x, point.y);
+    const moved = rect.width > 5 || rect.height > 5;
+    if (!active.moved && moved) {
+      active.moved = true;
+    }
+    setSelectionRect(rect);
+    if (active.moved) {
+      setSelectedTrackIds(selectedIdsFromRect(rect));
+    }
+    event.preventDefault();
+  }
+
+  function handleLibraryPointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    const active = libraryMarqueeRef.current;
+    if (!active || active.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (!active.moved && active.clickedTrackId) {
+      toggleTrack(active.clickedTrackId);
+    }
+
+    libraryMarqueeRef.current = null;
+    setSelectionRect(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    event.preventDefault();
+  }
+
   function updateGeneratorParam<K extends keyof GeneratorParams>(key: K, value: GeneratorParams[K]) {
     setGeneratorParams((previous) => ({ ...previous, [key]: value }));
   }
 
-  function combinePresetDescriptors(nextMapperPresetId: string, nextMapTypePresetId: string) {
-    const mapperPreset = mapperStylePresets.find((item) => item.id === nextMapperPresetId);
-    const mapTypePreset = mapTypePresets.find((item) => item.id === nextMapTypePresetId);
-    return Array.from(
-      new Set(
-        [...(mapTypePreset?.descriptors ?? []), ...(mapperPreset?.descriptors ?? [])]
-          .map((item) => item.trim())
-          .filter(Boolean),
-      ),
-    );
+  function selectedMultiValues(event: ReactChangeEvent<HTMLSelectElement>) {
+    return Array.from(event.currentTarget.selectedOptions).map((option) => option.value);
   }
 
-  function applyMapperPreset(nextPresetId: string) {
-    setMapperPresetId(nextPresetId);
-    const presetOption = mapperStylePresets.find((item) => item.id === nextPresetId) ?? null;
-    const mergedDescriptors = combinePresetDescriptors(nextPresetId, mapTypePresetId);
+  function applyStylePreset(nextPresetId: string) {
+    setStylePresetId(nextPresetId);
+    const presetOption = stylePresetOptions.find((item) => item.id === nextPresetId);
+    if (!presetOption) {
+      return;
+    }
     setGeneratorParams((previous) => ({
       ...previous,
-      mapperId: presetOption?.mapperId ?? null,
-      descriptors: mergedDescriptors,
+      ...presetOption.defaults,
+      descriptors: presetOption.descriptors,
     }));
   }
 
-  function applyMapTypePreset(nextPresetId: string) {
-    setMapTypePresetId(nextPresetId);
-    const presetOption = mapTypePresets.find((item) => item.id === nextPresetId) ?? null;
-    const mergedDescriptors = combinePresetDescriptors(mapperPresetId, nextPresetId);
-    setGeneratorParams((previous) => ({
-      ...previous,
-      ...(presetOption?.defaults ?? {}),
-      descriptors: mergedDescriptors,
-    }));
+  function applyMapperChoice(nextMapperChoiceId: string) {
+    setMapperChoiceId(nextMapperChoiceId);
+    if (nextMapperChoiceId === "none") {
+      updateGeneratorParam("mapperId", null);
+      return;
+    }
+    if (nextMapperChoiceId === "other") {
+      return;
+    }
+    const mapperOption = mapperStylePresets.find((item) => item.id === nextMapperChoiceId);
+    if (mapperOption) {
+      updateGeneratorParam("mapperId", mapperOption.mapperId);
+    }
+  }
+
+  function updateCustomMapperId(rawValue: string) {
+    setMapperChoiceId("other");
+    updateGeneratorParam("mapperId", rawValue === "" ? null : Number(rawValue));
   }
 
   async function runBatchMatch() {
@@ -750,7 +1051,6 @@ export default function Home() {
     setNotice("");
 
     for (const chunk of chunks) {
-      setMatchingTrackIds((previous) => Array.from(new Set([...previous, ...chunk])));
       try {
         const response = await fetch("/api/osu/match", {
           method: "POST",
@@ -801,7 +1101,6 @@ export default function Home() {
           return next;
         });
       } finally {
-        setMatchingTrackIds((previous) => previous.filter((trackId) => !chunk.includes(trackId)));
       }
     }
 
@@ -849,8 +1148,11 @@ export default function Home() {
           generatorParams,
         }),
       });
-      const body = (await response.json()) as { error?: string; jobs?: GenerationJob[]; job?: GenerationJob };
+      const body = (await response.json()) as { error?: string; details?: string[]; jobs?: GenerationJob[]; job?: GenerationJob };
       if (!response.ok) {
+        if (body.details && body.details.length > 0) {
+          throw new Error(`${body.error ?? "Could not create generation job(s)"} ${body.details.join(" ")}`);
+        }
         throw new Error(body.error ?? "Could not create generation job(s)");
       }
 
@@ -1093,7 +1395,15 @@ export default function Home() {
               </div>
             </div>
             <div className="pane-body pane-body--fill">
-              <ScrollArea className="ui-scroll-area library-scroll">
+              <ScrollArea
+                ref={libraryScrollRef}
+                className="ui-scroll-area library-scroll"
+                onPointerDown={handleLibraryPointerDown}
+                onPointerMove={handleLibraryPointerMove}
+                onPointerUp={handleLibraryPointerEnd}
+                onPointerCancel={handleLibraryPointerEnd}
+                onDragStart={(event) => event.preventDefault()}
+              >
                 {showLibrarySkeleton ? (
                   <div className="library-grid">
                     {librarySkeletonItems(18).map((key) => (
@@ -1113,106 +1423,65 @@ export default function Home() {
                   </div>
                 ) : (
                   <>
-                    <div className="library-grid">
-                      {tracks.map((track) => {
-                        const selected = selectedTrackSet.has(track.id);
-                        const snapshot = matchSnapshots[track.id];
-                        const generated = completedTrackIdSet.has(track.id);
-                        const bestMatch = snapshot?.matches?.[0] ?? null;
-                        const hasExactMatch = Boolean(bestMatch);
-                        const topHit = hasExactMatch ? null : snapshot?.topHit ?? null;
-                        const bestMatchMeta = matchMetaText(bestMatch);
-                        const topHitMeta = matchMetaText(topHit);
+                    <div className="library-marquee-layer">
+                      <div className="library-grid">
+                        {tracks.map((track) => {
+                          const selected = selectedTrackSet.has(track.id);
+                          const generated = completedTrackIdSet.has(track.id);
 
-                        return (
-                          <article
-                            key={track.id}
-                            className="track-card"
-                            data-selected={selected ? "true" : "false"}
-                            onClick={() => toggleTrack(track.id)}
-                          >
-                            <div className="track-topline">
-                              <Checkbox
-                                checked={selected}
-                                onChange={() => toggleTrack(track.id)}
-                                onClick={(event) => event.stopPropagation()}
-                                aria-label={`Select ${track.title}`}
-                              />
-                              <span className="track-meta">{msToClock(track.durationMs)}</span>
-                            </div>
-                            <div className="track-art">
-                              {track.artworkUrl ? (
-                                <Image
-                                  src={track.artworkUrl}
-                                  alt={`${track.title} artwork`}
-                                  fill
-                                  unoptimized
-                                  sizes="(max-width: 900px) 45vw, 160px"
+                          return (
+                            <article
+                              key={track.id}
+                              className="track-card"
+                              data-track-id={track.id}
+                              data-selected={selected ? "true" : "false"}
+                            >
+                              <div className="track-topline">
+                                <Checkbox
+                                  data-no-marquee="true"
+                                  checked={selected}
+                                  onChange={() => toggleTrack(track.id)}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onClick={(event) => event.stopPropagation()}
+                                  aria-label={`Select ${track.title}`}
                                 />
-                              ) : null}
-                            </div>
-                            <div className="track-content">
-                              <h3 className="track-title">{track.title}</h3>
-                              <p className="track-meta">{track.artists.join(", ")}</p>
-                              <p className="track-meta">{track.album}</p>
-                              <div className="track-match-compartment">
-                                <div className="row">
-                                  <span className="tiny muted">Match</span>
-                                  {snapshot?.error ? (
-                                    <Badge variant="danger">Error</Badge>
-                                  ) : hasExactMatch ? (
-                                    <Badge variant="success">Exact</Badge>
-                                  ) : snapshot ? (
-                                    <Badge variant="warning">Missing</Badge>
-                                  ) : (
-                                    <Badge variant="neutral">Pending</Badge>
-                                  )}
-                                </div>
-                                {snapshot?.error ? (
-                                  <p className="track-meta">{snapshot.error}</p>
-                                ) : hasExactMatch && bestMatch ? (
-                                  <>
-                                    <p className="track-meta">
-                                      osu: <span className="track-match-title">{bestMatch.artist} - {bestMatch.title}</span>
-                                    </p>
-                                    {bestMatchMeta ? <p className="track-meta">{bestMatchMeta}</p> : null}
-                                  </>
-                                ) : topHit ? (
-                                  <>
-                                    <p className="track-meta">No exact match yet.</p>
-                                    <p className="track-meta">Hover card for top hit.</p>
-                                  </>
-                                ) : snapshot ? (
-                                  <p className="track-meta">No hit from current search.</p>
-                                ) : (
-                                  <p className="track-meta">Run batch match to populate.</p>
-                                )}
+                                <span className="track-meta">{msToClock(track.durationMs)}</span>
                               </div>
-                              <div className="track-flags">
-                                <Badge variant="neutral">{track.sourceLabel}</Badge>
-                                {matchingTrackSet.has(track.id) ? <Badge variant="info">Matching...</Badge> : null}
-                                {hasExactMatch ? <Badge variant="success">Matched</Badge> : null}
-                                {snapshot && !snapshot.error && snapshot.matches.length === 0 ? (
-                                  <Badge variant="warning">Unmatched</Badge>
+                              <div className="track-art">
+                                {track.artworkUrl ? (
+                                  <Image
+                                    src={track.artworkUrl}
+                                    alt={`${track.title} artwork`}
+                                    fill
+                                    unoptimized
+                                    sizes="(max-width: 900px) 45vw, 160px"
+                                  />
                                 ) : null}
-                                {topHit ? <Badge variant="info">Top hit on hover</Badge> : null}
-                                {snapshot?.error ? <Badge variant="danger">Match Error</Badge> : null}
-                                {generated ? <Badge variant="info">Generated</Badge> : null}
                               </div>
-                            </div>
-                            {topHit ? (
-                              <div className="track-tophit-hover">
-                                <p className="tiny">Top hit suggestion</p>
-                                <p className="track-meta">
-                                  {topHit.artist} - {topHit.title}
-                                </p>
-                                {topHitMeta ? <p className="track-meta">{topHitMeta}</p> : null}
-                                <p className="track-meta">{topHit.status}</p>
+                              <div className="track-content">
+                                <h3 className="track-title">{track.title}</h3>
+                                <p className="track-meta">{track.artists.join(", ")}</p>
+                                <p className="track-meta">{track.album}</p>
+                                <div className="track-flags">
+                                  <Badge variant="neutral">{track.sourceLabel}</Badge>
+                                  {generated ? <Badge variant="info">Generated</Badge> : null}
+                                </div>
                               </div>
-                            ) : null}
-                          </article>
-                        );
-                      })}
+                            </article>
+                          );
+                        })}
+                      </div>
+                      {selectionRect && (selectionRect.width > 5 || selectionRect.height > 5) ? (
+                        <div
+                          className="library-selection-box"
+                          style={{
+                            left: `${selectionRect.left}px`,
+                            top: `${selectionRect.top}px`,
+                            width: `${selectionRect.width}px`,
+                            height: `${selectionRect.height}px`,
+                          }}
+                        />
+                      ) : null}
                     </div>
                     {tracks.length === 0 ? <p className="tiny muted">No tracks on this page. Adjust filters or import again.</p> : null}
                   </>
@@ -1347,36 +1616,43 @@ export default function Home() {
                       <option value="balanced">Balanced</option>
                       <option value="high_quality">High Quality</option>
                     </Select>
-                    <span className="tiny muted">Mapper style preset</span>
-                    <Select value={mapperPresetId} onChange={(event) => applyMapperPreset(event.target.value)}>
-                      <option value="none">No mapper preset</option>
-                      {mapperStylePresets.map((presetOption) => (
-                        <option key={presetOption.id} value={presetOption.id}>
-                          {presetOption.label} ({presetOption.mapperId})
-                        </option>
-                      ))}
-                    </Select>
-                    {selectedMapperPreset ? <p className="tiny muted">{selectedMapperPreset.description}</p> : null}
-                    <span className="tiny muted">Map archetype preset</span>
-                    <Select value={mapTypePresetId} onChange={(event) => applyMapTypePreset(event.target.value)}>
-                      <option value="none">No map-type preset</option>
-                      {mapTypePresets.map((presetOption) => (
+                    <span className="tiny muted">Style preset (combined archetypes + mapper-inspired examples)</span>
+                    <Select value={stylePresetId} onChange={(event) => applyStylePreset(event.target.value)}>
+                      {stylePresetOptions.map((presetOption) => (
                         <option key={presetOption.id} value={presetOption.id}>
                           {presetOption.label}
                         </option>
                       ))}
                     </Select>
-                    {selectedMapTypePreset ? <p className="tiny muted">{selectedMapTypePreset.description}</p> : null}
+                    {selectedStylePreset ? <p className="tiny muted">{selectedStylePreset.description}</p> : null}
+                    <span className="tiny muted">Mapper lock (optional)</span>
+                    <Select value={mapperChoiceId} onChange={(event) => applyMapperChoice(event.target.value)}>
+                      <option value="none">No mapper lock</option>
+                      {mapperStylePresets.map((mapperOption) => (
+                        <option key={mapperOption.id} value={mapperOption.id}>
+                          {mapperOption.label} ({mapperOption.mapperId})
+                        </option>
+                      ))}
+                      <option value="other">Other (custom mapper ID)</option>
+                    </Select>
+                    {selectedMapperOption ? <p className="tiny muted">{selectedMapperOption.description}</p> : null}
+                    {mapperChoiceId === "other" ? (
+                      <Input
+                        type="number"
+                        placeholder="Custom mapper ID"
+                        value={generatorParams.mapperId ?? ""}
+                        onChange={(event) => updateCustomMapperId(event.target.value)}
+                      />
+                    ) : null}
 
                     <p className="tiny muted">
-                      Preset chooses baseline runtime speed/quality. Mapper preset applies mapper ID + style descriptors.
-                      Map archetype preset applies descriptors plus common AR/OD/CS/SR defaults.
+                      Style preset applies descriptors plus optional AR/OD/CS/SR defaults. Mapper lock is independent and optional.
                     </p>
 
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <Target size={12} />
-                        Star difficulty target (SR). Typical: 4.8 - 6.2
+                        Star difficulty target (SR, required). Typical: 4.8 - 6.2
                       </span>
                       <Input
                         type="number"
@@ -1395,22 +1671,8 @@ export default function Home() {
 
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
-                        <User size={12} />
-                        Mapper ID style lock. Typical: leave blank unless forcing style.
-                      </span>
-                      <Input
-                        type="number"
-                        value={generatorParams.mapperId ?? ""}
-                        onChange={(event) =>
-                          updateGeneratorParam("mapperId", event.target.value === "" ? null : Number(event.target.value))
-                        }
-                      />
-                    </div>
-
-                    <div className="section-block generator-control">
-                      <span className="tiny muted generator-label">
                         <Calendar size={12} />
-                        Style year. Typical modern mapping: 2018 - current year.
+                        Style year (optional). Typical modern mapping: 2018 - current year.
                       </span>
                       <Input
                         type="number"
@@ -1424,26 +1686,27 @@ export default function Home() {
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <Tags size={12} />
-                        Descriptors (comma-separated). Typical: `jump aim, clean` or `streams, flow aim`.
+                        Descriptors (multi-select, optional)
                       </span>
-                      <Input
-                        value={(generatorParams.descriptors ?? []).join(", ")}
-                        onChange={(event) =>
-                          updateGeneratorParam(
-                            "descriptors",
-                            event.target.value
-                              .split(",")
-                              .map((item) => item.trim())
-                              .filter(Boolean),
-                          )
-                        }
-                      />
+                      <Select
+                        multiple
+                        size={8}
+                        value={generatorParams.descriptors ?? []}
+                        onChange={(event) => updateGeneratorParam("descriptors", selectedMultiValues(event))}
+                      >
+                        {descriptorOptions.map((descriptor) => (
+                          <option key={descriptor} value={descriptor}>
+                            {descriptor}
+                          </option>
+                        ))}
+                      </Select>
+                      <p className="tiny muted">Hold Cmd/Ctrl to select multiple styles.</p>
                     </div>
 
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <Eye size={12} />
-                        AR (Approach Rate). Typical: 9.0 - 10.3 for higher-diff standard maps.
+                        AR (Approach Rate, optional). Typical: 9.0 - 10.3 for higher-diff standard maps.
                       </span>
                       <Input
                         type="number"
@@ -1460,7 +1723,7 @@ export default function Home() {
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <Crosshair size={12} />
-                        OD (Overall Difficulty). Typical: 7.5 - 10.
+                        OD (Overall Difficulty, optional). Typical: 7.5 - 10.
                       </span>
                       <Input
                         type="number"
@@ -1477,7 +1740,7 @@ export default function Home() {
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <Circle size={12} />
-                        CS (Circle Size). Typical standard: 3.8 - 4.2
+                        CS (Circle Size, optional). Typical standard: 3.8 - 4.2
                       </span>
                       <Input
                         type="number"
@@ -1494,7 +1757,7 @@ export default function Home() {
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <Heart size={12} />
-                        HP (drain). Typical: 4 - 7
+                        HP (drain, optional). Typical: 4 - 7
                       </span>
                       <Input
                         type="number"
@@ -1511,7 +1774,7 @@ export default function Home() {
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <SlidersHorizontal size={12} />
-                        CFG scale (style strength). Typical: 0.9 - 1.2
+                        CFG scale (style strength, optional). Typical: 0.9 - 1.2
                       </span>
                       <Input
                         type="number"
@@ -1528,7 +1791,7 @@ export default function Home() {
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <Flame size={12} />
-                        Sampling temperature. Typical: 0.9 - 1.1
+                        Sampling temperature (optional). Typical: 0.9 - 1.1
                       </span>
                       <Input
                         type="number"
@@ -1545,7 +1808,7 @@ export default function Home() {
                     <div className="section-block generator-control">
                       <span className="tiny muted generator-label">
                         <Gauge size={12} />
-                        Top-p sampling. Typical: 0.9 - 0.98
+                        Top-p sampling (optional). Typical: 0.9 - 0.98
                       </span>
                       <Input
                         type="number"
@@ -1614,7 +1877,7 @@ export default function Home() {
                           />
                         </div>
                         <div className="section-block generator-control">
-                          <span className="tiny muted">Seed (blank = random)</span>
+                          <span className="tiny muted">Seed (integer, optional; blank = random)</span>
                           <Input
                             type="number"
                             value={generatorParams.seed ?? ""}
@@ -1622,23 +1885,97 @@ export default function Home() {
                           />
                         </div>
                         <div className="section-block generator-control">
-                          <span className="tiny muted">Negative descriptors (comma-separated)</span>
-                          <Input
-                            value={(generatorParams.negativeDescriptors ?? []).join(", ")}
+                          <span className="tiny muted">Device target (enum, optional)</span>
+                          <Select
+                            value={generatorParams.device ?? "auto"}
+                            onChange={(event) => updateGeneratorParam("device", event.target.value as GeneratorParams["device"])}
+                          >
+                            <option value="auto">auto</option>
+                            <option value="cuda">cuda</option>
+                            <option value="cpu">cpu</option>
+                            <option value="mps">mps</option>
+                          </Select>
+                        </div>
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">Precision (enum, optional)</span>
+                          <Select
+                            value={generatorParams.precision ?? "auto"}
+                            onChange={(event) =>
+                              updateGeneratorParam("precision", event.target.value as GeneratorParams["precision"])
+                            }
+                          >
+                            <option value="auto">auto</option>
+                            <option value="fp16">fp16</option>
+                            <option value="bf16">bf16</option>
+                            <option value="fp32">fp32</option>
+                          </Select>
+                        </div>
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">Attention implementation (enum, optional)</span>
+                          <Select
+                            value={generatorParams.attnImplementation ?? "auto"}
                             onChange={(event) =>
                               updateGeneratorParam(
-                                "negativeDescriptors",
-                                event.target.value
-                                  .split(",")
-                                  .map((item) => item.trim())
-                                  .filter(Boolean),
+                                "attnImplementation",
+                                event.target.value as GeneratorParams["attnImplementation"],
                               )
                             }
-                          />
+                          >
+                            <option value="auto">auto</option>
+                            <option value="sdpa">sdpa</option>
+                            <option value="flash_attention_2">flash_attention_2</option>
+                            <option value="eager">eager</option>
+                          </Select>
+                        </div>
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">Negative descriptors (multi-select)</span>
+                          <Select
+                            multiple
+                            size={7}
+                            value={generatorParams.negativeDescriptors ?? []}
+                            onChange={(event) => updateGeneratorParam("negativeDescriptors", selectedMultiValues(event))}
+                          >
+                            {negativeDescriptorOptions.map((descriptor) => (
+                              <option key={descriptor} value={descriptor}>
+                                {descriptor}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">In-context mode (multi-select)</span>
+                          <Select
+                            multiple
+                            size={4}
+                            value={generatorParams.inContext ?? []}
+                            onChange={(event) => updateGeneratorParam("inContext", selectedMultiValues(event))}
+                          >
+                            {inContextOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">Output type (multi-select)</span>
+                          <Select
+                            multiple
+                            size={3}
+                            value={generatorParams.outputType ?? []}
+                            onChange={(event) => updateGeneratorParam("outputType", selectedMultiValues(event))}
+                          >
+                            {outputTypeOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </Select>
                         </div>
                       </div>
                     </details>
 
+                    <span className="tiny muted">Job timeout (seconds)</span>
                     <Input
                       type="number"
                       min={300}
@@ -1646,6 +1983,7 @@ export default function Home() {
                       value={timeoutSec}
                       onChange={(event) => setTimeoutSec(Number(event.target.value || 600))}
                     />
+                    <span className="tiny muted">Budget cap (USD)</span>
                     <Input
                       type="number"
                       min={1}
@@ -1663,28 +2001,29 @@ export default function Home() {
                           </Badge>
                         </div>
                         <p className="tiny muted">
-                          Session-only credentials: saved in encrypted HTTP-only cookie, not persisted in the app store.
+                          Quick setup: run <code>aws configure sso</code> once, then{" "}
+                          <code>aws sso login --profile {(awsProfile.trim() || "default")}</code>, then click auto-load.
                         </p>
-                        {awsSessionStatus.accessKeyIdHint ? (
-                          <p className="tiny muted">Active key: {awsSessionStatus.accessKeyIdHint}</p>
-                        ) : null}
-                        <Input
-                          placeholder="AWS Access Key ID"
-                          value={awsAccessKeyId}
-                          onChange={(event) => setAwsAccessKeyId(event.target.value)}
-                        />
-                        <Input
-                          placeholder="AWS Secret Access Key"
-                          type="password"
-                          value={awsSecretAccessKey}
-                          onChange={(event) => setAwsSecretAccessKey(event.target.value)}
-                        />
-                        <Input
-                          placeholder="AWS Session Token (optional)"
-                          type="password"
-                          value={awsSessionToken}
-                          onChange={(event) => setAwsSessionToken(event.target.value)}
-                        />
+                        <div className="row-wrap">
+                          <Input
+                            placeholder="AWS CLI profile (default)"
+                            value={awsProfile}
+                            onChange={(event) => setAwsProfile(event.target.value)}
+                          />
+                          <Button variant="secondary" onClick={() => void autoLoadAwsRuntimeSession()} disabled={busy}>
+                            Auto-load AWS (recommended)
+                          </Button>
+                          <Button variant="secondary" onClick={() => void loadAwsRuntimeSessionFromCli()} disabled={busy}>
+                            Load from AWS CLI
+                          </Button>
+                          <Button variant="ghost" onClick={() => void clearAwsRuntimeSession()} disabled={busy}>
+                            Clear AWS Session
+                          </Button>
+                        </div>
+                        <p className="tiny muted">
+                          Auto-load resolves credentials from AWS SDK chain (env vars, shared config/profile, SSO cache, or instance role) and
+                          tries to discover queue/job definition/S3 bucket automatically.
+                        </p>
                         <Input placeholder="Region (e.g. us-east-1)" value={awsRegion} onChange={(event) => setAwsRegion(event.target.value)} />
                         <Input
                           placeholder="Batch Queue ARN or name"
@@ -1703,14 +2042,61 @@ export default function Home() {
                           value={awsCloudWatchLogGroup}
                           onChange={(event) => setAwsCloudWatchLogGroup(event.target.value)}
                         />
-                        <div className="row-wrap">
-                          <Button variant="secondary" onClick={() => void saveAwsRuntimeSession()} disabled={busy}>
-                            Save AWS Session
-                          </Button>
-                          <Button variant="ghost" onClick={() => void clearAwsRuntimeSession()} disabled={busy}>
-                            Clear AWS Session
-                          </Button>
+                        {awsSessionStatus.accessKeyIdHint ? (
+                          <p className="tiny muted">Active key: {awsSessionStatus.accessKeyIdHint}</p>
+                        ) : null}
+                        {awsSessionStatus.profile ? <p className="tiny muted">Loaded profile: {awsSessionStatus.profile}</p> : null}
+                        <div className="section-block generator-control">
+                          <span className="tiny muted generator-label">
+                            <Cpu size={12} />
+                            Hosted inference GPU
+                          </span>
+                          {awsSessionStatus.gpuHint ? (
+                            <p className="tiny muted">Detected queue instance/GPU: {awsSessionStatus.gpuHint}</p>
+                          ) : (
+                            <p className="tiny muted">
+                              GPU model comes from your AWS Batch compute environment instance types for the selected queue.
+                            </p>
+                          )}
+                          {awsSessionStatus.gpuCountPerJob ? (
+                            <p className="tiny muted">Job definition GPU count: {awsSessionStatus.gpuCountPerJob}</p>
+                          ) : null}
+                          <p className="tiny muted">
+                            Typical picks: `g6.xlarge` (L4) for cost/perf, `g6e.xlarge` (L40S) for more VRAM/throughput, `p5` for
+                            high-throughput premium.
+                          </p>
                         </div>
+                        <details className="inline-help">
+                          <summary className="tiny muted">Fallbacks and manual entry</summary>
+                          <div className="list">
+                            <p className="tiny muted">
+                              If auto-load fails, try `Load from AWS CLI` (uses `aws configure export-credentials`) or enter IAM credentials
+                              manually.
+                            </p>
+                            <Input
+                              placeholder="AWS Access Key ID"
+                              value={awsAccessKeyId}
+                              onChange={(event) => setAwsAccessKeyId(event.target.value)}
+                            />
+                            <Input
+                              placeholder="AWS Secret Access Key"
+                              type="password"
+                              value={awsSecretAccessKey}
+                              onChange={(event) => setAwsSecretAccessKey(event.target.value)}
+                            />
+                            <Input
+                              placeholder="AWS Session Token (optional)"
+                              type="password"
+                              value={awsSessionToken}
+                              onChange={(event) => setAwsSessionToken(event.target.value)}
+                            />
+                            <div className="row-wrap">
+                              <Button variant="secondary" onClick={() => void saveAwsRuntimeSession()} disabled={busy}>
+                                Save AWS Session
+                              </Button>
+                            </div>
+                          </div>
+                        </details>
                       </div>
                     ) : null}
 
@@ -1721,7 +2107,8 @@ export default function Home() {
                           osu: create an OAuth application at <Link href="https://osu.ppy.sh/home/account/edit#new-oauth-application" target="_blank" rel="noreferrer">osu account settings</Link> and add client id/secret to env.
                         </p>
                         <p>
-                          AWS: create IAM access keys in <Link href="https://console.aws.amazon.com/iam/home#/security_credentials" target="_blank" rel="noreferrer">IAM Security Credentials</Link>, then provide region + Batch queue/job definition + S3 bucket/prefix above.
+                          AWS: easiest path is AWS CLI SSO via <code>aws configure sso</code> and then <code>Load from AWS CLI</code>. Manual IAM
+                          access keys are only needed for advanced/manual mode. Prefer <code>Auto-load AWS</code> first.
                         </p>
                       </div>
                     </details>

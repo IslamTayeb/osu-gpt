@@ -7,12 +7,15 @@ export type AwsRuntimeSession = {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken?: string;
+  profile?: string;
   region: string;
   batchQueue: string;
   batchJobDefinition: string;
   s3Bucket: string;
   s3Prefix: string;
   cloudWatchLogGroup?: string;
+  gpuHint?: string;
+  gpuCountPerJob?: number;
   updatedAt: string;
 };
 
@@ -20,12 +23,15 @@ export type AwsRuntimeSessionInput = {
   accessKeyId?: string;
   secretAccessKey?: string;
   sessionToken?: string;
+  profile?: string;
   region?: string;
   batchQueue?: string;
   batchJobDefinition?: string;
   s3Bucket?: string;
   s3Prefix?: string;
   cloudWatchLogGroup?: string;
+  gpuHint?: string;
+  gpuCountPerJob?: number;
 };
 
 function secretKey() {
@@ -57,7 +63,13 @@ export function normalizeAwsRuntimeSessionInput(input: AwsRuntimeSessionInput): 
   const s3Bucket = requireField(input.s3Bucket, "s3Bucket");
   const s3Prefix = (input.s3Prefix ?? "osu-gpt").trim() || "osu-gpt";
   const cloudWatchLogGroup = (input.cloudWatchLogGroup ?? "").trim();
+  const gpuHint = (input.gpuHint ?? "").trim();
+  const gpuCountPerJob =
+    typeof input.gpuCountPerJob === "number" && Number.isFinite(input.gpuCountPerJob) && input.gpuCountPerJob > 0
+      ? Math.floor(input.gpuCountPerJob)
+      : undefined;
   const sessionToken = (input.sessionToken ?? "").trim();
+  const profile = (input.profile ?? "").trim();
 
   if (!isSafeToken(region)) {
     throw new Error("region includes unsupported characters");
@@ -70,12 +82,15 @@ export function normalizeAwsRuntimeSessionInput(input: AwsRuntimeSessionInput): 
     accessKeyId,
     secretAccessKey,
     sessionToken: sessionToken || undefined,
+    profile: profile || undefined,
     region,
     batchQueue,
     batchJobDefinition,
     s3Bucket,
     s3Prefix,
     cloudWatchLogGroup: cloudWatchLogGroup || undefined,
+    gpuHint: gpuHint || undefined,
+    gpuCountPerJob,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -126,12 +141,15 @@ export function decodeAwsRuntimeSession(cookieValue: string | undefined) {
 export function maskAwsRuntimeSession(session: AwsRuntimeSession) {
   return {
     configured: true,
+    profile: session.profile,
     region: session.region,
     batchQueue: session.batchQueue,
     batchJobDefinition: session.batchJobDefinition,
     s3Bucket: session.s3Bucket,
     s3Prefix: session.s3Prefix,
     cloudWatchLogGroup: session.cloudWatchLogGroup ?? null,
+    gpuHint: session.gpuHint,
+    gpuCountPerJob: session.gpuCountPerJob,
     accessKeyIdHint: session.accessKeyId.length >= 4 ? `****${session.accessKeyId.slice(-4)}` : "****",
     updatedAt: session.updatedAt,
   };

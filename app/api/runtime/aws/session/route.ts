@@ -6,6 +6,7 @@ import {
   maskAwsRuntimeSession,
   normalizeAwsRuntimeSessionInput,
 } from "@/lib/awsSession";
+import { detectAwsBatchGpuHint } from "@/lib/awsAutoConfig";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,7 @@ export async function POST(request: NextRequest) {
       accessKeyId?: string;
       secretAccessKey?: string;
       sessionToken?: string;
+      profile?: string;
       region?: string;
       batchQueue?: string;
       batchJobDefinition?: string;
@@ -30,7 +32,26 @@ export async function POST(request: NextRequest) {
       s3Prefix?: string;
       cloudWatchLogGroup?: string;
     };
-    const session = normalizeAwsRuntimeSessionInput(body);
+    let session = normalizeAwsRuntimeSessionInput(body);
+    try {
+      const gpuHint = await detectAwsBatchGpuHint({
+        region: session.region,
+        credentials: {
+          accessKeyId: session.accessKeyId,
+          secretAccessKey: session.secretAccessKey,
+          sessionToken: session.sessionToken,
+        },
+        batchQueue: session.batchQueue,
+        batchJobDefinition: session.batchJobDefinition,
+      });
+      session = normalizeAwsRuntimeSessionInput({
+        ...session,
+        gpuHint: gpuHint.gpuHint,
+        gpuCountPerJob: gpuHint.gpuCountPerJob,
+      });
+    } catch {
+      // GPU detection is best-effort.
+    }
     const cookieValue = encodeAwsRuntimeSession(session);
     const response = NextResponse.json(maskAwsRuntimeSession(session));
     response.cookies.set({

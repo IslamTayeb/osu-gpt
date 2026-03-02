@@ -55,23 +55,38 @@ You can either:
 
 Hosted jobs require your own AWS Batch + S3 setup and session credentials entered in-app.
 
-1. Create IAM access keys (or STS temporary credentials):
-   - https://console.aws.amazon.com/iam/home#/security_credentials
-2. In AWS, prepare:
+1. Recommended: configure AWS SSO profile once:
+   - `aws configure sso` (or `aws configure`)
+2. If using SSO locally, refresh login:
+   - `aws sso login --profile default` (replace profile if needed)
+3. In AWS, prepare:
    - Batch queue
    - Batch job definition
    - S3 bucket/prefix for artifacts
    - (optional) CloudWatch log group
-3. In the app, switch runtime to `Hosted AWS runtime` and fill:
-   - Access Key ID
-   - Secret Access Key
-   - Session Token (optional)
+4. In the app (default runtime is hosted AWS), fill:
+   - AWS profile (usually `default`)
    - Region
    - Batch Queue
    - Batch Job Definition
    - S3 Bucket / Prefix
    - CloudWatch Log Group (optional)
-4. Click `Save AWS Session`.
+5. Click `Auto-load AWS (recommended)` first.
+   - Uses AWS SDK credential chain (env vars, shared profile/SSO cache, or instance role).
+   - Attempts to auto-discover queue/job definition/S3 bucket if missing.
+6. Fallback: click `Load from AWS CLI`.
+7. Manual fallback (advanced): fill direct key material and click `Save AWS Session`:
+   - Access Key ID
+   - Secret Access Key
+   - Session Token (optional)
+   - Region / queue / job definition / bucket / prefix
+
+Inference GPU note:
+- GPU model is determined by your AWS Batch compute environment instance types.
+- Typical instance choices:
+  - `g6.xlarge` (L4) for balanced cost/perf.
+  - `g6e.xlarge` (L40S) for higher VRAM/throughput.
+  - `p5` family (H100/H200 variants) for premium throughput.
 
 Credentials are stored as an encrypted, HTTP-only session cookie and are not written into `store.json`.
 

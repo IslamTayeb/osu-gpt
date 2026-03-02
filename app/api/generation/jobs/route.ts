@@ -3,7 +3,7 @@ import { createGenerationJob } from "@/lib/jobs";
 import { readStore } from "@/lib/store";
 import { getAwsRuntimeSessionFromRequest } from "@/lib/awsSession";
 import { syncHostedAwsJobs } from "@/lib/awsRuntime";
-import { sanitizeGeneratorParams } from "@/lib/generatorConfig";
+import { sanitizeGeneratorParams, validateGeneratorParams } from "@/lib/generatorConfig";
 
 export const runtime = "nodejs";
 
@@ -54,6 +54,16 @@ export async function POST(request: NextRequest) {
   const preset = body.preset ?? "balanced";
   const budgetCapUsd = Number.isFinite(body.budgetCapUsd) ? Number(body.budgetCapUsd) : 50;
   const timeoutSec = Math.min(600, Math.max(300, Number.isFinite(body.timeoutSec) ? Number(body.timeoutSec) : 600));
+  const validationErrors = validateGeneratorParams(body.generatorParams);
+  if (validationErrors.length > 0) {
+    return NextResponse.json(
+      {
+        error: "Invalid generator params.",
+        details: validationErrors,
+      },
+      { status: 400 },
+    );
+  }
   const generatorParams = sanitizeGeneratorParams(body.generatorParams);
   const awsSession = runtime === "hosted_aws" ? getAwsRuntimeSessionFromRequest(request) : null;
 

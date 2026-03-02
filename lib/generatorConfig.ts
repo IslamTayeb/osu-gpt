@@ -16,7 +16,15 @@ export type MapTypePreset = {
   defaults: Partial<
     Pick<
       GeneratorParams,
-      "difficulty" | "approachRate" | "overallDifficulty" | "circleSize" | "hpDrainRate" | "cfgScale" | "temperature" | "topP"
+      | "difficulty"
+      | "approachRate"
+      | "overallDifficulty"
+      | "circleSize"
+      | "hpDrainRate"
+      | "cfgScale"
+      | "temperature"
+      | "topP"
+      | "year"
     >
   >;
 };
@@ -143,6 +151,42 @@ export const mapTypePresets: MapTypePreset[] = [
       cfgScale: 1.1,
       temperature: 0.9,
       topP: 0.92,
+    },
+  },
+  {
+    id: "bursty_old_map",
+    label: "Bursty Old Map",
+    description:
+      "Old-style burst/triple focus: lower AR/OD, close-spaced 3-6 note bursts, cleaner grid-ish patterning, and vocal-forward rhythm emphasis.",
+    descriptors: ["old style", "bursty", "triples", "close spacing", "vocal rhythm", "grid based"],
+    defaults: {
+      year: 2010,
+      difficulty: 4.9,
+      approachRate: 8.4,
+      overallDifficulty: 7.6,
+      circleSize: 4,
+      hpDrainRate: 4.6,
+      cfgScale: 1.03,
+      temperature: 0.94,
+      topP: 0.94,
+    },
+  },
+  {
+    id: "jumpy_old_map",
+    label: "Jumpy Old Map",
+    description:
+      "Old jump-focused style with simpler geometry, side-to-side/oibon jump movement, and lower AR/OD than modern high-BPM jump maps.",
+    descriptors: ["old style", "jump aim", "oibon", "side to side jumps", "large jumps", "vocal rhythm"],
+    defaults: {
+      year: 2011,
+      difficulty: 5.2,
+      approachRate: 8.8,
+      overallDifficulty: 7.9,
+      circleSize: 4,
+      hpDrainRate: 4.9,
+      cfgScale: 1.04,
+      temperature: 0.95,
+      topP: 0.95,
     },
   },
   {
@@ -331,6 +375,51 @@ const stringArrayKeys = new Set<keyof GeneratorParams>([
 
 const numberArrayKeys = new Set<keyof GeneratorParams>(["timesteps"]);
 
+const integerNumberKeys = new Set<keyof GeneratorParams>([
+  "gamemode",
+  "beatmapId",
+  "mapperId",
+  "year",
+  "keycount",
+  "seed",
+  "startTime",
+  "endTime",
+  "timingLeniency",
+  "topK",
+  "numBeams",
+  "timerNumBeams",
+  "timerIterations",
+  "maxBatchSize",
+  "offset",
+  "previewTime",
+  "refineIters",
+  "maxSeqLen",
+  "overlapBuffer",
+]);
+
+const enumValuesByKey: Partial<Record<keyof GeneratorParams, string[]>> = {
+  device: ["auto", "cpu", "cuda", "mps"],
+  precision: ["auto", "fp16", "bf16", "fp32"],
+  attnImplementation: ["auto", "sdpa", "flash_attention_2", "eager"],
+  inContext: ["NONE", "GD", "NO_HS", "MAP", "TIMING"],
+  outputType: ["MAP", "TIMING", "HITSOUND"],
+};
+
+const numberRangeByKey: Partial<Record<keyof GeneratorParams, { min?: number; max?: number }>> = {
+  difficulty: { min: 0, max: 12 },
+  approachRate: { min: 0, max: 11 },
+  overallDifficulty: { min: 0, max: 11 },
+  circleSize: { min: 2, max: 7 },
+  hpDrainRate: { min: 0, max: 10 },
+  cfgScale: { min: 0.5, max: 2 },
+  temperature: { min: 0.4, max: 2 },
+  topP: { min: 0, max: 1 },
+  sliderMultiplier: { min: 0.5, max: 3 },
+  sliderTickRate: { min: 0.1, max: 8 },
+};
+
+const requiredGeneratorParamKeys = new Set<keyof GeneratorParams>(["difficulty"]);
+
 const hydraKeyByParam: Record<keyof GeneratorParams, string> = {
   gamemode: "gamemode",
   beatmapId: "beatmap_id",
@@ -483,6 +572,105 @@ export function sanitizeGeneratorParams(input: unknown): GeneratorParams {
   }
 
   return output as GeneratorParams;
+}
+
+export function isGeneratorParamRequired(key: keyof GeneratorParams) {
+  return requiredGeneratorParamKeys.has(key);
+}
+
+export function validateGeneratorParams(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return ["generatorParams must be an object."];
+  }
+
+  const raw = input as Record<string, unknown>;
+  const errors: string[] = [];
+  const knownKeys = new Set(Object.keys(hydraKeyByParam));
+
+  for (const rawKey of Object.keys(raw)) {
+    if (!knownKeys.has(rawKey)) {
+      errors.push(`Unknown generator param: ${rawKey}`);
+      continue;
+    }
+
+    const key = rawKey as keyof GeneratorParams;
+    const value = raw[rawKey];
+    if (value === null || value === undefined) {
+      continue;
+    }
+
+    if (numberKeys.has(key)) {
+      const parsed = cleanNumber(value);
+      if (parsed === null) {
+        errors.push(`${rawKey} must be a number or null.`);
+        continue;
+      }
+      if (integerNumberKeys.has(key) && !Number.isInteger(parsed)) {
+        errors.push(`${rawKey} must be an integer.`);
+      }
+      const range = numberRangeByKey[key];
+      if (range?.min !== undefined && parsed < range.min) {
+        errors.push(`${rawKey} must be >= ${range.min}.`);
+      }
+      if (range?.max !== undefined && parsed > range.max) {
+        errors.push(`${rawKey} must be <= ${range.max}.`);
+      }
+      continue;
+    }
+
+    if (booleanKeys.has(key)) {
+      if (typeof value !== "boolean") {
+        errors.push(`${rawKey} must be a boolean or null.`);
+      }
+      continue;
+    }
+
+    if (stringKeys.has(key)) {
+      if (typeof value !== "string") {
+        errors.push(`${rawKey} must be a string or null.`);
+        continue;
+      }
+      const enumValues = enumValuesByKey[key];
+      if (enumValues && !enumValues.includes(value)) {
+        errors.push(`${rawKey} must be one of: ${enumValues.join(", ")}.`);
+      }
+      continue;
+    }
+
+    if (stringArrayKeys.has(key)) {
+      if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+        errors.push(`${rawKey} must be a string[] or null.`);
+        continue;
+      }
+      const enumValues = enumValuesByKey[key];
+      if (enumValues) {
+        const invalid = value.filter((item) => !enumValues.includes(item));
+        if (invalid.length > 0) {
+          errors.push(`${rawKey} includes invalid values: ${invalid.join(", ")}.`);
+        }
+      }
+      continue;
+    }
+
+    if (numberArrayKeys.has(key)) {
+      if (!Array.isArray(value) || value.some((item) => cleanNumber(item) === null)) {
+        errors.push(`${rawKey} must be a number[] or null.`);
+      }
+    }
+  }
+
+  for (const key of requiredGeneratorParamKeys) {
+    const value = raw[key];
+    if (value === null || value === undefined) {
+      errors.push(`${key} is required.`);
+      continue;
+    }
+    if (numberKeys.has(key) && cleanNumber(value) === null) {
+      errors.push(`${key} must be a number.`);
+    }
+  }
+
+  return errors;
 }
 
 export function applyGenerationPreset(
