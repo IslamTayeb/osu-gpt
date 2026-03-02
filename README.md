@@ -9,7 +9,32 @@ Simple v1 implementation of:
 - Mapperatorinator generation jobs (local + hosted AWS Batch)
 - Artifact download with 7-day expiration metadata
 
-## Run
+## Quick setup (recommended)
+
+From this `web` directory:
+
+```bash
+./install.sh
+npm run dev
+```
+
+The setup script (`scripts/dev-setup.sh`) does the following:
+
+- installs `npm` dependencies
+- creates `.env` from a template if missing
+- checks local generation prerequisites (`spotdl`, `python`, `../Mapperatorinator`)
+- checks whether `aws` CLI is available for hosted runtime workflows
+
+If you have access to a Mapperatorinator repo and want to clone it during setup:
+
+```bash
+./install.sh --clone-mapperatorinator --mapper-repo <git-url>
+```
+
+You can also set `MAPPERATORINATOR_REPO=<git-url>` instead of passing `--mapper-repo`.
+`npm run setup:dev` is still available and runs the same setup flow.
+
+## Run (manual)
 
 ```bash
 cd web
@@ -99,7 +124,7 @@ Local generation needs:
 
 - `spotdl` installed and available on PATH
 - `python` available on PATH
-- `../Mapperatorinator` present and runnable
+- `../Mapperatorinator` present and runnable (this repo does not currently include it as a git submodule)
 
 Hosted generation needs:
 
