@@ -45,6 +45,12 @@ type HostedAwsSessionStatus = {
   updatedAt?: string;
 };
 
+type OsuSessionStatus = {
+  configured: boolean;
+  clientIdHint?: string;
+  updatedAt?: string;
+};
+
 type SessionResponse = {
   spotifyConnected: boolean;
   spotdlAcknowledgedAt: string | null;
@@ -54,6 +60,7 @@ type SessionResponse = {
   };
   runtime?: {
     hostedAws?: HostedAwsSessionStatus;
+    osu?: OsuSessionStatus;
   };
   trackCount?: number;
   importStatus?: SpotifyImportStatus;
@@ -61,6 +68,7 @@ type SessionResponse = {
 
 type TrackMatchResultPayload = {
   matches: MatchResult[];
+  topHit: MatchResult | null;
   strongMatch: boolean;
   autoGenerate: boolean;
   error?: string;
@@ -128,14 +136,6 @@ function chunkArray<T>(input: T[], size: number) {
   return chunks;
 }
 
-function parseGeneratorParams(text: string) {
-  const parsed = JSON.parse(text);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Generator params must be a JSON object.");
-  }
-  return parsed as GeneratorParams;
-}
-
 function librarySkeletonItems(count: number) {
   return Array.from({ length: count }, (_, index) => index);
 }
@@ -169,7 +169,7 @@ export default function Home() {
   const [budgetCapUsd, setBudgetCapUsd] = useState(50);
 
   const [mapperPresetId, setMapperPresetId] = useState("none");
-  const [generatorParamsText, setGeneratorParamsText] = useState(() => JSON.stringify(generatorParamTemplate, null, 2));
+  const [generatorParams, setGeneratorParams] = useState<GeneratorParams>({ ...generatorParamTemplate });
 
   const [awsSessionStatus, setAwsSessionStatus] = useState<HostedAwsSessionStatus>({ configured: false });
   const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
@@ -181,6 +181,10 @@ export default function Home() {
   const [awsS3Bucket, setAwsS3Bucket] = useState("");
   const [awsS3Prefix, setAwsS3Prefix] = useState("osu-gpt");
   const [awsCloudWatchLogGroup, setAwsCloudWatchLogGroup] = useState("/aws/batch/job");
+
+  const [osuSessionStatus, setOsuSessionStatus] = useState<OsuSessionStatus>({ configured: false });
+  const [osuClientId, setOsuClientId] = useState("");
+  const [osuClientSecret, setOsuClientSecret] = useState("");
 
   const [bootstrapping, setBootstrapping] = useState(true);
   const [tracksLoading, setTracksLoading] = useState(false);
@@ -217,6 +221,11 @@ export default function Home() {
 
   const completedTrackIdSet = useMemo(
     () => new Set(jobs.filter((job) => job.status === "completed").map((job) => job.trackId)),
+    [jobs],
+  );
+
+  const hasActiveJobs = useMemo(
+    () => jobs.some((job) => job.status === "queued" || job.status === "running"),
     [jobs],
   );
 
@@ -269,6 +278,17 @@ export default function Home() {
     [selectedTrackIds, trackById, matchSnapshots],
   );
 
+  const unmatchedTopHits = useMemo(
+    () =>
+      selectedTrackIds
+        .map((trackId) => ({
+          track: trackById.get(trackId),
+          snapshot: matchSnapshots[trackId],
+        }))
+        .filter((entry) => entry.track && entry.snapshot && entry.snapshot.matches.length === 0 && entry.snapshot.topHit),
+    [selectedTrackIds, trackById, matchSnapshots],
+  );
+
   const fetchSession = useCallback(async () => {
     const response = await fetch("/api/session", { cache: "no-store" });
     const data = (await response.json()) as SessionResponse;
@@ -291,6 +311,13 @@ export default function Home() {
       }
     } else {
       setAwsSessionStatus({ configured: false });
+    }
+
+    const osuRuntime = data.runtime?.osu;
+    if (osuRuntime) {
+      setOsuSessionStatus(osuRuntime);
+    } else {
+      setOsuSessionStatus({ configured: false });
     }
   }, []);
 
@@ -383,7 +410,9 @@ export default function Home() {
     const timer = setInterval(() => {
       void (async () => {
         const status = await fetchImportStatus();
-        await fetchJobs();
+        if (hasActiveJobs || runtime === "hosted_aws") {
+          await fetchJobs();
+        }
         if (status.status === "running") {
           await fetchTracks();
         }
@@ -391,7 +420,7 @@ export default function Home() {
     }, 2500);
 
     return () => clearInterval(timer);
-  }, [fetchJobs, fetchImportStatus, fetchTracks]);
+  }, [fetchJobs, fetchImportStatus, fetchTracks, hasActiveJobs, runtime]);
 
   useEffect(() => {
     const previous = lastImportStateRef.current;
@@ -482,6 +511,55 @@ export default function Home() {
       setNotice("Downloader acknowledgment saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Acknowledgment failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveOsuRuntimeSession() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/runtime/osu/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: osuClientId,
+          clientSecret: osuClientSecret,
+        }),
+      });
+      const body = (await response.json()) as OsuSessionStatus & { error?: string };
+      if (!response.ok) {
+        throw new Error(body.error ?? "Could not save osu credentials");
+      }
+      setOsuSessionStatus(body);
+      setOsuClientSecret("");
+      setNotice("osu API credentials saved for this session.");
+      await fetchSession();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save osu credentials");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearOsuRuntimeSession() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/runtime/osu/session", { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error("Could not clear osu credentials");
+      }
+      setOsuSessionStatus({ configured: false });
+      setOsuClientId("");
+      setOsuClientSecret("");
+      setNotice("osu API credentials cleared.");
+      await fetchSession();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not clear osu credentials");
     } finally {
       setBusy(false);
     }
@@ -586,24 +664,21 @@ export default function Home() {
     setSelectedTrackIds([]);
   }
 
+  function updateGeneratorParam<K extends keyof GeneratorParams>(key: K, value: GeneratorParams[K]) {
+    setGeneratorParams((previous) => ({ ...previous, [key]: value }));
+  }
+
   function applyMapperPreset(nextPresetId: string) {
     setMapperPresetId(nextPresetId);
     const presetOption = mapperStylePresets.find((item) => item.id === nextPresetId);
     if (!presetOption) {
       return;
     }
-
-    setGeneratorParamsText((previous) => {
-      let nextParams: GeneratorParams;
-      try {
-        nextParams = parseGeneratorParams(previous);
-      } catch {
-        nextParams = { ...generatorParamTemplate };
-      }
-      nextParams.mapperId = presetOption.mapperId;
-      nextParams.descriptors = presetOption.descriptors;
-      return JSON.stringify(nextParams, null, 2);
-    });
+    setGeneratorParams((previous) => ({
+      ...previous,
+      mapperId: presetOption.mapperId,
+      descriptors: presetOption.descriptors,
+    }));
   }
 
   async function runBatchMatch() {
@@ -645,6 +720,7 @@ export default function Home() {
             next[trackId] = {
               trackId,
               matches: result.matches ?? [],
+              topHit: result.topHit ?? null,
               strongMatch: Boolean(result.strongMatch),
               autoGenerate: Boolean(result.autoGenerate),
               updatedAt: now,
@@ -662,6 +738,7 @@ export default function Home() {
             next[trackId] = {
               trackId,
               matches: [],
+              topHit: null,
               strongMatch: false,
               autoGenerate: false,
               updatedAt: now,
@@ -700,14 +777,6 @@ export default function Home() {
       return;
     }
     if (budgetCapUsd > 50 && !window.confirm("Budget cap is above $50. Continue?")) {
-      return;
-    }
-
-    let generatorParams: GeneratorParams;
-    try {
-      generatorParams = parseGeneratorParams(generatorParamsText);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid generator params JSON.");
       return;
     }
 
@@ -943,6 +1012,19 @@ export default function Home() {
                   </Button>
                 </div>
               </div>
+
+              <div className="divider" />
+
+              <div className="section-block">
+                <div className="row">
+                  <span className="section-label">Import Status</span>
+                  <Badge variant={importStatus.status === "failed" ? "danger" : "neutral"}>{importStatus.status}</Badge>
+                </div>
+                <Progress value={importProgress(importStatus)} />
+                <p className="tiny muted">
+                  {importStatus.message ?? "Ready"} {importStatus.importedCount ? `(${importStatus.importedCount} processed)` : ""}
+                </p>
+              </div>
             </CardContent>
           </Card>
 
@@ -1022,6 +1104,7 @@ export default function Home() {
                                 {snapshot && !snapshot.error && snapshot.matches.length === 0 ? (
                                   <Badge variant="warning">Unmatched</Badge>
                                 ) : null}
+                                {snapshot?.topHit && snapshot.matches.length === 0 ? <Badge variant="info">Top hit available</Badge> : null}
                                 {snapshot?.error ? <Badge variant="danger">Match Error</Badge> : null}
                                 {generated ? <Badge variant="info">Generated</Badge> : null}
                               </div>
@@ -1041,7 +1124,7 @@ export default function Home() {
             <div className="pane-head">
               <h2 className="pane-title">Actions / Results</h2>
             </div>
-            <div className="pane-body">
+            <div className="pane-body pane-body--right-scroll">
               {bootstrapping && !jobsLoadedOnce ? (
                 <div className="list">
                   <Skeleton style={{ width: "100%", height: "68px" }} />
@@ -1050,17 +1133,6 @@ export default function Home() {
                 </div>
               ) : (
                 <>
-                  <div className="section-block">
-                    <div className="row">
-                      <span className="section-label">Import Status</span>
-                      <Badge variant={importStatus.status === "failed" ? "danger" : "neutral"}>{importStatus.status}</Badge>
-                    </div>
-                    <Progress value={importProgress(importStatus)} />
-                    <p className="tiny muted">
-                      {importStatus.message ?? "Ready"} {importStatus.importedCount ? `(${importStatus.importedCount} processed)` : ""}
-                    </p>
-                  </div>
-
                   {!spotdlAckAt ? (
                     <div className="section-block">
                       <div className="row-wrap">
@@ -1079,9 +1151,59 @@ export default function Home() {
 
                   <div className="section-block">
                     <span className="section-label">Batch match review</span>
+                    <div className="section-block hosted-runtime-block">
+                      <div className="row">
+                        <span className="section-label">osu API Session</span>
+                        <Badge variant={osuSessionStatus.configured ? "success" : "warning"}>
+                          {osuSessionStatus.configured ? "Configured" : "Not configured"}
+                        </Badge>
+                      </div>
+                      <p className="tiny muted">
+                        Required for reliable search. The public endpoint currently ignores query terms.
+                      </p>
+                      <details className="inline-help">
+                        <summary className="tiny muted">How to get osu API credentials</summary>
+                        <div className="list">
+                          <p className="tiny muted">1. Sign in at osu.ppy.sh.</p>
+                          <p className="tiny muted">
+                            2. Open{" "}
+                            <Link href="https://osu.ppy.sh/home/account/edit#new-oauth-application" target="_blank" rel="noreferrer">
+                              Account Settings - OAuth Applications
+                            </Link>
+                            .
+                          </p>
+                          <p className="tiny muted">3. Create an OAuth app, then copy Client ID and Client Secret.</p>
+                          <p className="tiny muted">
+                            4. Paste them here and click <strong>Save osu API Session</strong>.
+                          </p>
+                        </div>
+                      </details>
+                      {osuSessionStatus.clientIdHint ? (
+                        <p className="tiny muted">Active client: {osuSessionStatus.clientIdHint}</p>
+                      ) : null}
+                      <Input
+                        placeholder="osu OAuth Client ID"
+                        value={osuClientId}
+                        onChange={(event) => setOsuClientId(event.target.value)}
+                      />
+                      <Input
+                        placeholder="osu OAuth Client Secret"
+                        type="password"
+                        value={osuClientSecret}
+                        onChange={(event) => setOsuClientSecret(event.target.value)}
+                      />
+                      <div className="row-wrap">
+                        <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
+                          Save osu API Session
+                        </Button>
+                        <Button variant="ghost" onClick={() => void clearOsuRuntimeSession()} disabled={busy}>
+                          Clear osu API Session
+                        </Button>
+                      </div>
+                    </div>
                     <Button onClick={() => void runBatchMatch()} disabled={matching || busy || selectedTrackIds.length === 0}>
                       {matching ? <LoaderCircle size={14} className="spin" /> : <Search size={14} />}
-                      Find Ranked/Loved matches
+                      Find osu matches
                     </Button>
                     {lastMatchSummary ? (
                       <div className="chip-row">
@@ -1114,6 +1236,247 @@ export default function Home() {
                     </Select>
                     {selectedMapperPreset ? <p className="tiny muted">{selectedMapperPreset.description}</p> : null}
 
+                    <p className="tiny muted">
+                      Preset chooses a baseline speed/quality profile. Mapper preset applies mapper ID + style descriptors.
+                    </p>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">Star difficulty target (SR). Typical: 4.8 - 6.2</span>
+                      <Input
+                        type="number"
+                        step={0.1}
+                        min={0}
+                        max={12}
+                        value={generatorParams.difficulty ?? ""}
+                        onChange={(event) =>
+                          updateGeneratorParam(
+                            "difficulty",
+                            event.target.value === "" ? null : Number(event.target.value),
+                          )
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">Mapper ID style lock. Typical: leave blank unless forcing style.</span>
+                      <Input
+                        type="number"
+                        value={generatorParams.mapperId ?? ""}
+                        onChange={(event) =>
+                          updateGeneratorParam("mapperId", event.target.value === "" ? null : Number(event.target.value))
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">Style year. Typical modern mapping: 2018 - current year.</span>
+                      <Input
+                        type="number"
+                        min={2007}
+                        max={new Date().getUTCFullYear()}
+                        value={generatorParams.year ?? ""}
+                        onChange={(event) => updateGeneratorParam("year", event.target.value === "" ? null : Number(event.target.value))}
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">
+                        Descriptors (comma-separated). Typical: `jump aim, clean` or `streams, flow aim`.
+                      </span>
+                      <Input
+                        value={(generatorParams.descriptors ?? []).join(", ")}
+                        onChange={(event) =>
+                          updateGeneratorParam(
+                            "descriptors",
+                            event.target.value
+                              .split(",")
+                              .map((item) => item.trim())
+                              .filter(Boolean),
+                          )
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">
+                        AR (Approach Rate). Typical: 9.0 - 10.3 for higher-diff standard maps.
+                      </span>
+                      <Input
+                        type="number"
+                        step={0.1}
+                        min={0}
+                        max={11}
+                        value={generatorParams.approachRate ?? ""}
+                        onChange={(event) =>
+                          updateGeneratorParam("approachRate", event.target.value === "" ? null : Number(event.target.value))
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">OD (Overall Difficulty). Typical: 7.5 - 10.</span>
+                      <Input
+                        type="number"
+                        step={0.1}
+                        min={0}
+                        max={11}
+                        value={generatorParams.overallDifficulty ?? ""}
+                        onChange={(event) =>
+                          updateGeneratorParam("overallDifficulty", event.target.value === "" ? null : Number(event.target.value))
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">CS (Circle Size). Typical standard: 3.8 - 4.2</span>
+                      <Input
+                        type="number"
+                        step={0.1}
+                        min={2}
+                        max={7}
+                        value={generatorParams.circleSize ?? ""}
+                        onChange={(event) =>
+                          updateGeneratorParam("circleSize", event.target.value === "" ? null : Number(event.target.value))
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">HP (drain). Typical: 4 - 7</span>
+                      <Input
+                        type="number"
+                        step={0.1}
+                        min={0}
+                        max={10}
+                        value={generatorParams.hpDrainRate ?? ""}
+                        onChange={(event) =>
+                          updateGeneratorParam("hpDrainRate", event.target.value === "" ? null : Number(event.target.value))
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">CFG scale (style strength). Typical: 0.9 - 1.2</span>
+                      <Input
+                        type="number"
+                        step={0.05}
+                        min={0.5}
+                        max={2}
+                        value={generatorParams.cfgScale ?? ""}
+                        onChange={(event) =>
+                          updateGeneratorParam("cfgScale", event.target.value === "" ? null : Number(event.target.value))
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">Sampling temperature. Typical: 0.9 - 1.1</span>
+                      <Input
+                        type="number"
+                        step={0.05}
+                        min={0.4}
+                        max={2}
+                        value={generatorParams.temperature ?? ""}
+                        onChange={(event) =>
+                          updateGeneratorParam("temperature", event.target.value === "" ? null : Number(event.target.value))
+                        }
+                      />
+                    </div>
+
+                    <div className="section-block generator-control">
+                      <span className="tiny muted">Top-p sampling. Typical: 0.9 - 0.98</span>
+                      <Input
+                        type="number"
+                        step={0.01}
+                        min={0}
+                        max={1}
+                        value={generatorParams.topP ?? ""}
+                        onChange={(event) => updateGeneratorParam("topP", event.target.value === "" ? null : Number(event.target.value))}
+                      />
+                    </div>
+
+                    <div className="row-wrap generator-toggle-row">
+                      <label className="tiny muted row-wrap">
+                        <Checkbox
+                          checked={Boolean(generatorParams.superTiming)}
+                          onChange={(event) => updateGeneratorParam("superTiming", event.target.checked)}
+                        />
+                        Super timing (slower, more precise BPM handling)
+                      </label>
+                      <label className="tiny muted row-wrap">
+                        <Checkbox
+                          checked={Boolean(generatorParams.generatePositions)}
+                          onChange={(event) => updateGeneratorParam("generatePositions", event.target.checked)}
+                        />
+                        Diffusion positions
+                      </label>
+                      <label className="tiny muted row-wrap">
+                        <Checkbox
+                          checked={Boolean(generatorParams.hitsounded)}
+                          onChange={(event) => updateGeneratorParam("hitsounded", event.target.checked)}
+                        />
+                        Hitsounded output
+                      </label>
+                    </div>
+
+                    <details className="inline-help">
+                      <summary className="tiny muted">Advanced generator controls</summary>
+                      <div className="list">
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">Slider multiplier (SV base). Typical: 1.2 - 1.8</span>
+                          <Input
+                            type="number"
+                            step={0.05}
+                            min={0.5}
+                            max={3}
+                            value={generatorParams.sliderMultiplier ?? ""}
+                            onChange={(event) =>
+                              updateGeneratorParam(
+                                "sliderMultiplier",
+                                event.target.value === "" ? null : Number(event.target.value),
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">Slider tick rate. Typical: 1.0 - 2.0</span>
+                          <Input
+                            type="number"
+                            step={0.1}
+                            min={0.1}
+                            max={8}
+                            value={generatorParams.sliderTickRate ?? ""}
+                            onChange={(event) =>
+                              updateGeneratorParam("sliderTickRate", event.target.value === "" ? null : Number(event.target.value))
+                            }
+                          />
+                        </div>
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">Seed (blank = random)</span>
+                          <Input
+                            type="number"
+                            value={generatorParams.seed ?? ""}
+                            onChange={(event) => updateGeneratorParam("seed", event.target.value === "" ? null : Number(event.target.value))}
+                          />
+                        </div>
+                        <div className="section-block generator-control">
+                          <span className="tiny muted">Negative descriptors (comma-separated)</span>
+                          <Input
+                            value={(generatorParams.negativeDescriptors ?? []).join(", ")}
+                            onChange={(event) =>
+                              updateGeneratorParam(
+                                "negativeDescriptors",
+                                event.target.value
+                                  .split(",")
+                                  .map((item) => item.trim())
+                                  .filter(Boolean),
+                              )
+                            }
+                          />
+                        </div>
+                      </div>
+                    </details>
+
                     <Input
                       type="number"
                       min={300}
@@ -1127,17 +1490,6 @@ export default function Home() {
                       step={1}
                       value={budgetCapUsd}
                       onChange={(event) => setBudgetCapUsd(Number(event.target.value || 50))}
-                    />
-
-                    <label className="tiny muted" htmlFor="generator-params-json">
-                      Generator params (full JSON controls for Mapperatorinator)
-                    </label>
-                    <textarea
-                      id="generator-params-json"
-                      className="ui-input ui-textarea"
-                      rows={14}
-                      value={generatorParamsText}
-                      onChange={(event) => setGeneratorParamsText(event.target.value)}
                     />
 
                     {runtime === "hosted_aws" ? (
@@ -1255,6 +1607,42 @@ export default function Home() {
                                   className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
                                 >
                                   Open beatmapset
+                                </Link>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </div>
+
+                  <div className="section-block">
+                    <span className="section-label">Unmatched top hits</span>
+                    <ScrollArea className="ui-scroll-area jobs-scroll">
+                      <div className="list">
+                        {unmatchedTopHits.length === 0 ? (
+                          <p className="tiny muted">No top-hit suggestions yet for unmatched selected tracks.</p>
+                        ) : (
+                          unmatchedTopHits.map(({ track, snapshot }) => {
+                            if (!track || !snapshot?.topHit) return null;
+                            const topHit = snapshot.topHit;
+                            return (
+                              <div key={`${track.id}-top-hit`} className="job-card">
+                                <div className="row">
+                                  <span className="tiny">{track.title}</span>
+                                  <Badge variant={topHit.status === "ranked" ? "success" : "warning"}>{topHit.status}</Badge>
+                                </div>
+                                <p className="tiny muted">
+                                  Suggested: {topHit.artist} - {topHit.title}
+                                </p>
+                                <p className="tiny muted">{topHit.rationale}</p>
+                                <Link
+                                  href={topHit.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+                                >
+                                  Open top hit
                                 </Link>
                               </div>
                             );

@@ -99,7 +99,7 @@ export type MatchResult = {
   beatmapsetId: number;
   title: string;
   artist: string;
-  status: "ranked" | "loved";
+  status: string;
   url: string;
   confidence: number;
   rationale: string;
@@ -166,6 +166,7 @@ export type SpotifyImportStatus = {
 export type TrackMatchSnapshot = {
   trackId: string;
   matches: MatchResult[];
+  topHit?: MatchResult | null;
   strongMatch: boolean;
   autoGenerate: boolean;
   updatedAt: string;

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findOsuMatches, hasStrongMatch } from "@/lib/osuMatch";
 import { readStore, updateStore } from "@/lib/store";
+import { MatchResult } from "@/lib/types";
+import { getOsuRuntimeSessionFromRequest } from "@/lib/osuSession";
 
 export const runtime = "nodejs";
 
@@ -11,7 +13,8 @@ type MatchRequest = {
 
 type SuccessfulMatch = {
   trackId: string;
-  matches: Awaited<ReturnType<typeof findOsuMatches>>;
+  matches: MatchResult[];
+  topHit: MatchResult | null;
   strongMatch: boolean;
   autoGenerate: boolean;
 };
@@ -37,6 +40,7 @@ export async function POST(request: NextRequest) {
   const body = (await request.json()) as MatchRequest;
   const trackIds = normalizeTrackIds(body);
   const legacySingle = Boolean(body.trackId) && !Array.isArray(body.trackIds);
+  const osuSession = getOsuRuntimeSessionFromRequest(request);
 
   if (trackIds.length === 0) {
     return NextResponse.json({ error: "trackId or trackIds[] is required" }, { status: 400 });
@@ -52,12 +56,13 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const matches = await findOsuMatches(track);
+        const matches = await findOsuMatches(track, osuSession);
         return {
           trackId,
-          matches,
-          strongMatch: hasStrongMatch(matches),
-          autoGenerate: matches.length === 0,
+          matches: matches.matches,
+          topHit: matches.topHit,
+          strongMatch: hasStrongMatch(matches.matches),
+          autoGenerate: matches.matches.length === 0,
         };
       } catch (error) {
         return {
@@ -72,7 +77,8 @@ export async function POST(request: NextRequest) {
   const trackResults: Record<
     string,
     {
-      matches: Awaited<ReturnType<typeof findOsuMatches>>;
+      matches: MatchResult[];
+      topHit: MatchResult | null;
       strongMatch: boolean;
       autoGenerate: boolean;
       error?: string;
@@ -89,6 +95,7 @@ export async function POST(request: NextRequest) {
       if ("error" in outcome) {
         trackResults[outcome.trackId] = {
           matches: [],
+          topHit: null,
           strongMatch: false,
           autoGenerate: false,
           error: outcome.error,
@@ -96,6 +103,7 @@ export async function POST(request: NextRequest) {
         nextStore.matchesByTrackId[outcome.trackId] = {
           trackId: outcome.trackId,
           matches: [],
+          topHit: null,
           strongMatch: false,
           autoGenerate: false,
           updatedAt,
@@ -107,12 +115,14 @@ export async function POST(request: NextRequest) {
 
       trackResults[outcome.trackId] = {
         matches: outcome.matches,
+        topHit: outcome.topHit,
         strongMatch: outcome.strongMatch,
         autoGenerate: outcome.autoGenerate,
       };
       nextStore.matchesByTrackId[outcome.trackId] = {
         trackId: outcome.trackId,
         matches: outcome.matches,
+        topHit: outcome.topHit,
         strongMatch: outcome.strongMatch,
         autoGenerate: outcome.autoGenerate,
         updatedAt,
@@ -137,6 +147,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       matches: first.matches,
+      topHit: first.topHit,
       strongMatch: first.strongMatch,
       autoGenerate: first.autoGenerate,
       trackResults,

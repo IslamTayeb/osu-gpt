@@ -1,12 +1,16 @@
 import { MatchResult, Track } from "./types";
+import { OsuAuthCredentials, searchOsuBeatmapsets } from "./osuApi";
 
-type OsuSearchResponse = {
-  beatmapsets: Array<{
-    id: number;
-    artist: string;
-    title: string;
-    status: string;
-  }>;
+type OsuBeatmapset = {
+  id: number;
+  artist: string;
+  title: string;
+  status: string;
+};
+
+export type FindOsuMatchesResult = {
+  matches: MatchResult[];
+  topHit: MatchResult | null;
 };
 
 function normalize(input: string) {
@@ -33,23 +37,59 @@ function artistSubstringMatch(trackArtists: string[], setArtist: string) {
   return trackArtists.some((artist) => normalizedSubstringMatch(artist, setArtist));
 }
 
-export async function findOsuMatches(track: Track): Promise<MatchResult[]> {
+function tokenSet(input: string) {
+  return new Set(normalize(input).split(" ").filter(Boolean));
+}
+
+function tokenSimilarity(a: string, b: string) {
+  const left = tokenSet(a);
+  const right = tokenSet(b);
+  if (left.size === 0 || right.size === 0) {
+    return 0;
+  }
+  let shared = 0;
+  for (const token of left) {
+    if (right.has(token)) {
+      shared += 1;
+    }
+  }
+  return (2 * shared) / (left.size + right.size);
+}
+
+function toMatchResult(set: OsuBeatmapset, confidence: number, rationale: string): MatchResult {
+  return {
+    beatmapsetId: set.id,
+    title: set.title,
+    artist: set.artist,
+    status: set.status,
+    url: `https://osu.ppy.sh/beatmapsets/${set.id}`,
+    confidence,
+    rationale,
+    durationDeltaMs: 0,
+  };
+}
+
+function looseScore(track: Track, set: OsuBeatmapset) {
+  const titleSim = tokenSimilarity(track.title, set.title);
+  const artistSim = tokenSimilarity(track.artists.join(" "), set.artist);
+  const titleBonus = normalizedSubstringMatch(track.title, set.title) ? 0.35 : 0;
+  const artistBonus = artistSubstringMatch(track.artists, set.artist) ? 0.35 : 0;
+  return Math.min(1, 0.2 * titleSim + 0.1 * artistSim + titleBonus + artistBonus);
+}
+
+export async function findOsuMatches(
+  track: Track,
+  osuCredentials?: OsuAuthCredentials | null,
+): Promise<FindOsuMatchesResult> {
   const queries = Array.from(new Set([track.title.trim(), `${track.artists.join(" ")} ${track.title}`.trim()])).filter(
     Boolean,
   );
-  const foundSets: OsuSearchResponse["beatmapsets"] = [];
+  const foundSets: OsuBeatmapset[] = [];
   const seenSetIds = new Set<number>();
 
   for (const query of queries) {
-    const url = `https://osu.ppy.sh/beatmapsets/search?q=${encodeURIComponent(query)}`;
-    const response = await fetch(url, { cache: "no-store" });
-
-    if (!response.ok) {
-      throw new Error(`osu search failed (${response.status})`);
-    }
-
-    const data = (await response.json()) as OsuSearchResponse;
-    for (const set of data.beatmapsets ?? []) {
+    const beatmapsets = await searchOsuBeatmapsets(query, osuCredentials);
+    for (const set of beatmapsets ?? []) {
       if (seenSetIds.has(set.id)) {
         continue;
       }
@@ -58,31 +98,29 @@ export async function findOsuMatches(track: Track): Promise<MatchResult[]> {
     }
   }
 
-  const allowedStatuses = new Set(["ranked", "loved"]);
-
   const matches = foundSets
-    .filter((set) => allowedStatuses.has(set.status))
     .filter(
       (set) => normalizedSubstringMatch(track.title, set.title) && artistSubstringMatch(track.artists, set.artist),
     )
-    .map((set) => {
-      const rationale = "title substring exact match (required), artist substring exact match (required)";
-
-      return {
-        beatmapsetId: set.id,
-        title: set.title,
-        artist: set.artist,
-        status: set.status as "ranked" | "loved",
-        url: `https://osu.ppy.sh/beatmapsets/${set.id}`,
-        confidence: 0.99,
-        rationale,
-        durationDeltaMs: 0,
-      };
-    })
+    .map((set) => toMatchResult(set, 0.99, "title substring exact match (required), artist substring exact match (required)"))
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, 5);
 
-  return matches;
+  let topHit: MatchResult | null = null;
+  if (matches.length === 0 && foundSets.length > 0) {
+    const best = foundSets
+      .map((set) => ({ set, score: looseScore(track, set) }))
+      .sort((a, b) => b.score - a.score)[0];
+    if (best && best.score > 0.2) {
+      topHit = toMatchResult(
+        best.set,
+        Math.max(0.35, best.score),
+        "closest title/artist hit from osu search (not an exact title+artist substring match)",
+      );
+    }
+  }
+
+  return { matches, topHit };
 }
 
 export function hasStrongMatch(matches: MatchResult[]) {

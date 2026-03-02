@@ -30,17 +30,20 @@ SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/callback
 ## Optional env
 
 ```env
-OSU_CLIENT_ID=...      # optional now; required only if you switch to osu OAuth APIs
-OSU_CLIENT_SECRET=...  # optional now; required only if you switch to osu OAuth APIs
-OSU_API_KEY=...        # legacy key, optional and currently not used by default flow
+OSU_CLIENT_ID=...      # recommended for reliable osu matching (server-side)
+OSU_CLIENT_SECRET=...  # recommended for reliable osu matching (server-side)
+OSU_API_KEY=...        # legacy key, currently unused by matching
 ```
 
 ## API key setup (osu + AWS)
 
 ### osu API credentials
 
-Current matching uses osu beatmapset public search and does not strictly require a key.  
-If you want OAuth credentials ready for future/private endpoints:
+Current matching uses osu OAuth search for reliable query behavior.
+The unauthenticated public endpoint currently ignores search query terms in this environment.
+You can either:
+- set `OSU_CLIENT_ID` + `OSU_CLIENT_SECRET` in `.env`, or
+- save them in-app under `Actions / Results -> Batch match review -> osu API Session` (session cookie).
 
 1. Sign in to osu and open account settings OAuth section:
    - https://osu.ppy.sh/home/account/edit#new-oauth-application
