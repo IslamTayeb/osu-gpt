@@ -8,6 +8,19 @@ export type MapperStylePreset = {
   descriptors: string[];
 };
 
+export type MapTypePreset = {
+  id: string;
+  label: string;
+  description: string;
+  descriptors: string[];
+  defaults: Partial<
+    Pick<
+      GeneratorParams,
+      "difficulty" | "approachRate" | "overallDifficulty" | "circleSize" | "hpDrainRate" | "cfgScale" | "temperature" | "topP"
+    >
+  >;
+};
+
 export const mapperStylePresets: MapperStylePreset[] = [
   {
     id: "sotarks",
@@ -64,6 +77,89 @@ export const mapperStylePresets: MapperStylePreset[] = [
     mapperId: 1052994,
     description: "Balanced modern style combining aim movement and controlled rhythm.",
     descriptors: ["jump aim", "aim control", "simple"],
+  },
+];
+
+export const mapTypePresets: MapTypePreset[] = [
+  {
+    id: "bursty_streamy_stamina",
+    label: "Bursty / Streamy / Stamina",
+    description: "Longer stream sections with burst transitions and sustained stamina pressure.",
+    descriptors: ["bursty", "streams", "stamina", "flow aim", "high density"],
+    defaults: {
+      difficulty: 6,
+      approachRate: 9.8,
+      overallDifficulty: 8.8,
+      circleSize: 4,
+      hpDrainRate: 6,
+      cfgScale: 1.05,
+      temperature: 0.95,
+      topP: 0.95,
+    },
+  },
+  {
+    id: "finger_aim_control_tech",
+    label: "Finger/Aim Control Tech",
+    description: "Technical rhythm maps with finger-control and aim-control focus.",
+    descriptors: ["finger control", "aim control", "technical", "rhythm complexity", "alt"],
+    defaults: {
+      difficulty: 5.8,
+      approachRate: 9.4,
+      overallDifficulty: 9,
+      circleSize: 4,
+      hpDrainRate: 5.4,
+      cfgScale: 1.12,
+      temperature: 0.92,
+      topP: 0.93,
+    },
+  },
+  {
+    id: "jumpy_high_bpm",
+    label: "Jumpy High-BPM",
+    description: "High-BPM jump emphasis with wide movement and spike-heavy sections.",
+    descriptors: ["jump aim", "high bpm", "wide aim", "difficulty spike", "snappy spacing"],
+    defaults: {
+      difficulty: 6.3,
+      approachRate: 10.1,
+      overallDifficulty: 9.2,
+      circleSize: 4,
+      hpDrainRate: 6.1,
+      cfgScale: 1.08,
+      temperature: 0.96,
+      topP: 0.95,
+    },
+  },
+  {
+    id: "precision_technical",
+    label: "Precision Technical",
+    description: "Precision-heavy controlled aim with technical phrasing and stricter accuracy demands.",
+    descriptors: ["precision", "distance snapped", "technical", "clean", "aim control"],
+    defaults: {
+      difficulty: 5.6,
+      approachRate: 9.6,
+      overallDifficulty: 9.3,
+      circleSize: 4.1,
+      hpDrainRate: 5.6,
+      cfgScale: 1.1,
+      temperature: 0.9,
+      topP: 0.92,
+    },
+  },
+  {
+    id: "comfortable_flow",
+    label: "Comfortable Flow",
+    description: "Readable, flow-oriented maps with smoother movement and moderate density.",
+    descriptors: ["flow aim", "clean", "comfortable", "readable", "balanced"],
+    defaults: {
+      difficulty: 5.1,
+      approachRate: 9.2,
+      overallDifficulty: 8.2,
+      circleSize: 4,
+      hpDrainRate: 4.8,
+      cfgScale: 1,
+      temperature: 1,
+      topP: 0.96,
+    },
   },
 ];
 

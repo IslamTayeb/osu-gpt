@@ -31,7 +31,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { generatorParamTemplate, mapperStylePresets } from "@/lib/generatorConfig";
+import { generatorParamTemplate, mapTypePresets, mapperStylePresets } from "@/lib/generatorConfig";
 
 type HostedAwsSessionStatus = {
   configured: boolean;
@@ -170,6 +170,7 @@ export default function Home() {
   const [budgetCapUsd, setBudgetCapUsd] = useState(50);
 
   const [mapperPresetId, setMapperPresetId] = useState("none");
+  const [mapTypePresetId, setMapTypePresetId] = useState("none");
   const [generatorParams, setGeneratorParams] = useState<GeneratorParams>({ ...generatorParamTemplate });
 
   const [awsSessionStatus, setAwsSessionStatus] = useState<HostedAwsSessionStatus>({ configured: false });
@@ -218,6 +219,10 @@ export default function Home() {
   const selectedMapperPreset = useMemo(
     () => mapperStylePresets.find((presetOption) => presetOption.id === mapperPresetId) ?? null,
     [mapperPresetId],
+  );
+  const selectedMapTypePreset = useMemo(
+    () => mapTypePresets.find((presetOption) => presetOption.id === mapTypePresetId) ?? null,
+    [mapTypePresetId],
   );
 
   const completedTrackIdSet = useMemo(
@@ -669,16 +674,37 @@ export default function Home() {
     setGeneratorParams((previous) => ({ ...previous, [key]: value }));
   }
 
+  function combinePresetDescriptors(nextMapperPresetId: string, nextMapTypePresetId: string) {
+    const mapperPreset = mapperStylePresets.find((item) => item.id === nextMapperPresetId);
+    const mapTypePreset = mapTypePresets.find((item) => item.id === nextMapTypePresetId);
+    return Array.from(
+      new Set(
+        [...(mapTypePreset?.descriptors ?? []), ...(mapperPreset?.descriptors ?? [])]
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+
   function applyMapperPreset(nextPresetId: string) {
     setMapperPresetId(nextPresetId);
-    const presetOption = mapperStylePresets.find((item) => item.id === nextPresetId);
-    if (!presetOption) {
-      return;
-    }
+    const presetOption = mapperStylePresets.find((item) => item.id === nextPresetId) ?? null;
+    const mergedDescriptors = combinePresetDescriptors(nextPresetId, mapTypePresetId);
     setGeneratorParams((previous) => ({
       ...previous,
-      mapperId: presetOption.mapperId,
-      descriptors: presetOption.descriptors,
+      mapperId: presetOption?.mapperId ?? null,
+      descriptors: mergedDescriptors,
+    }));
+  }
+
+  function applyMapTypePreset(nextPresetId: string) {
+    setMapTypePresetId(nextPresetId);
+    const presetOption = mapTypePresets.find((item) => item.id === nextPresetId) ?? null;
+    const mergedDescriptors = combinePresetDescriptors(mapperPresetId, nextPresetId);
+    setGeneratorParams((previous) => ({
+      ...previous,
+      ...(presetOption?.defaults ?? {}),
+      descriptors: mergedDescriptors,
     }));
   }
 
@@ -1183,27 +1209,53 @@ export default function Home() {
                         <p className="tiny muted">Active client: {osuSessionStatus.clientIdHint}</p>
                       ) : null}
                       {osuSessionStatus.configured && osuSessionStatus.source === "env" ? (
-                        <p className="tiny muted">Using server `.env` credentials. Restart dev server after editing `.env` values.</p>
-                      ) : null}
-                      <Input
-                        placeholder="osu OAuth Client ID"
-                        value={osuClientId}
-                        onChange={(event) => setOsuClientId(event.target.value)}
-                      />
-                      <Input
-                        placeholder="osu OAuth Client Secret"
-                        type="password"
-                        value={osuClientSecret}
-                        onChange={(event) => setOsuClientSecret(event.target.value)}
-                      />
-                      <div className="row-wrap">
-                        <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
-                          Save osu API Session
-                        </Button>
-                        <Button variant="ghost" onClick={() => void clearOsuRuntimeSession()} disabled={busy}>
-                          Clear osu API Session
-                        </Button>
-                      </div>
+                        <>
+                          <p className="tiny muted">Using server `.env` credentials. Restart dev server after editing `.env` values.</p>
+                          <details className="inline-help">
+                            <summary className="tiny muted">Override with browser session credentials</summary>
+                            <div className="list">
+                              <Input
+                                placeholder="osu OAuth Client ID"
+                                value={osuClientId}
+                                onChange={(event) => setOsuClientId(event.target.value)}
+                              />
+                              <Input
+                                placeholder="osu OAuth Client Secret"
+                                type="password"
+                                value={osuClientSecret}
+                                onChange={(event) => setOsuClientSecret(event.target.value)}
+                              />
+                              <div className="row-wrap">
+                                <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
+                                  Save osu API Session
+                                </Button>
+                              </div>
+                            </div>
+                          </details>
+                        </>
+                      ) : (
+                        <>
+                          <Input
+                            placeholder="osu OAuth Client ID"
+                            value={osuClientId}
+                            onChange={(event) => setOsuClientId(event.target.value)}
+                          />
+                          <Input
+                            placeholder="osu OAuth Client Secret"
+                            type="password"
+                            value={osuClientSecret}
+                            onChange={(event) => setOsuClientSecret(event.target.value)}
+                          />
+                          <div className="row-wrap">
+                            <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
+                              Save osu API Session
+                            </Button>
+                            <Button variant="ghost" onClick={() => void clearOsuRuntimeSession()} disabled={busy}>
+                              Clear osu API Session
+                            </Button>
+                          </div>
+                        </>
+                      )}
                     </div>
                     <Button onClick={() => void runBatchMatch()} disabled={matching || busy || selectedTrackIds.length === 0}>
                       {matching ? <LoaderCircle size={14} className="spin" /> : <Search size={14} />}
@@ -1230,6 +1282,7 @@ export default function Home() {
                       <option value="balanced">Balanced</option>
                       <option value="high_quality">High Quality</option>
                     </Select>
+                    <span className="tiny muted">Mapper style preset</span>
                     <Select value={mapperPresetId} onChange={(event) => applyMapperPreset(event.target.value)}>
                       <option value="none">No mapper preset</option>
                       {mapperStylePresets.map((presetOption) => (
@@ -1239,9 +1292,20 @@ export default function Home() {
                       ))}
                     </Select>
                     {selectedMapperPreset ? <p className="tiny muted">{selectedMapperPreset.description}</p> : null}
+                    <span className="tiny muted">Map archetype preset</span>
+                    <Select value={mapTypePresetId} onChange={(event) => applyMapTypePreset(event.target.value)}>
+                      <option value="none">No map-type preset</option>
+                      {mapTypePresets.map((presetOption) => (
+                        <option key={presetOption.id} value={presetOption.id}>
+                          {presetOption.label}
+                        </option>
+                      ))}
+                    </Select>
+                    {selectedMapTypePreset ? <p className="tiny muted">{selectedMapTypePreset.description}</p> : null}
 
                     <p className="tiny muted">
-                      Preset chooses a baseline speed/quality profile. Mapper preset applies mapper ID + style descriptors.
+                      Preset chooses baseline runtime speed/quality. Mapper preset applies mapper ID + style descriptors.
+                      Map archetype preset applies descriptors plus common AR/OD/CS/SR defaults.
                     </p>
 
                     <div className="section-block generator-control">
