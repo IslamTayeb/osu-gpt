@@ -1,12 +1,5 @@
 import { MatchResult, Track } from "./types";
-import { OsuAuthCredentials, searchOsuBeatmapsets } from "./osuApi";
-
-type OsuBeatmapset = {
-  id: number;
-  artist: string;
-  title: string;
-  status: string;
-};
+import { OsuAuthCredentials, OsuBeatmapset, searchOsuBeatmapsets } from "./osuApi";
 
 export type FindOsuMatchesResult = {
   matches: MatchResult[];
@@ -56,7 +49,27 @@ function tokenSimilarity(a: string, b: string) {
   return (2 * shared) / (left.size + right.size);
 }
 
+function summarizeDifficulty(set: OsuBeatmapset) {
+  const beatmaps = (set.beatmaps ?? []).filter((beatmap) => beatmap.mode === "osu");
+  const candidates = beatmaps.length > 0 ? beatmaps : set.beatmaps ?? [];
+  if (candidates.length === 0) {
+    return { maxDifficultyRating: null, topDifficultyName: null, bpm: typeof set.bpm === "number" ? set.bpm : null };
+  }
+
+  const sorted = [...candidates].sort((a, b) => (b.difficulty_rating ?? 0) - (a.difficulty_rating ?? 0));
+  const best = sorted[0];
+  return {
+    maxDifficultyRating:
+      typeof best?.difficulty_rating === "number" && Number.isFinite(best.difficulty_rating)
+        ? Number(best.difficulty_rating.toFixed(2))
+        : null,
+    topDifficultyName: best?.version ?? null,
+    bpm: typeof best?.bpm === "number" ? best.bpm : typeof set.bpm === "number" ? set.bpm : null,
+  };
+}
+
 function toMatchResult(set: OsuBeatmapset, confidence: number, rationale: string): MatchResult {
+  const difficulty = summarizeDifficulty(set);
   return {
     beatmapsetId: set.id,
     title: set.title,
@@ -66,6 +79,9 @@ function toMatchResult(set: OsuBeatmapset, confidence: number, rationale: string
     confidence,
     rationale,
     durationDeltaMs: 0,
+    maxDifficultyRating: difficulty.maxDifficultyRating,
+    topDifficultyName: difficulty.topDifficultyName,
+    bpm: difficulty.bpm,
   };
 }
 

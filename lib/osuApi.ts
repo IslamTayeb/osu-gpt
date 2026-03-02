@@ -9,14 +9,26 @@ export type OsuAuthCredentials = {
   clientSecret: string;
 };
 
+export type OsuBeatmap = {
+  id: number;
+  mode: string;
+  version?: string;
+  difficulty_rating?: number;
+  bpm?: number;
+};
+
+export type OsuBeatmapset = {
+  id: number;
+  title: string;
+  artist: string;
+  status: string;
+  creator?: string;
+  bpm?: number;
+  beatmaps?: OsuBeatmap[];
+};
+
 type OsuSearchResponse = {
-  beatmapsets?: Array<{
-    id: number;
-    title: string;
-    artist: string;
-    status: string;
-    creator?: string;
-  }>;
+  beatmapsets?: OsuBeatmapset[];
   search?: {
     query?: string;
     sort?: string;

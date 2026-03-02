@@ -104,6 +104,9 @@ export type MatchResult = {
   confidence: number;
   rationale: string;
   durationDeltaMs: number;
+  maxDifficultyRating?: number | null;
+  topDifficultyName?: string | null;
+  bpm?: number | null;
 };
 
 export type Artifact = {

@@ -5,13 +5,24 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Calendar,
   ChevronLeft,
   ChevronRight,
+  Circle,
+  Crosshair,
   Download,
+  Eye,
+  Flame,
+  Gauge,
+  Heart,
   LoaderCircle,
   RefreshCcw,
   Search,
+  SlidersHorizontal,
   Sparkles,
+  Tags,
+  Target,
+  User,
 } from "lucide-react";
 import type {
   GenerationJob,
@@ -112,6 +123,21 @@ function msToClock(ms: number) {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function matchMetaText(match: MatchResult | null | undefined) {
+  if (!match) return "";
+  const meta: string[] = [];
+  if (typeof match.maxDifficultyRating === "number" && Number.isFinite(match.maxDifficultyRating)) {
+    meta.push(`${match.maxDifficultyRating.toFixed(2)}★`);
+  }
+  if (match.topDifficultyName) {
+    meta.push(match.topDifficultyName);
+  }
+  if (typeof match.bpm === "number" && Number.isFinite(match.bpm)) {
+    meta.push(`${Math.round(match.bpm)} BPM`);
+  }
+  return meta.join(" · ");
 }
 
 function importProgress(status: SpotifyImportStatus) {
@@ -1092,6 +1118,11 @@ export default function Home() {
                         const selected = selectedTrackSet.has(track.id);
                         const snapshot = matchSnapshots[track.id];
                         const generated = completedTrackIdSet.has(track.id);
+                        const bestMatch = snapshot?.matches?.[0] ?? null;
+                        const hasExactMatch = Boolean(bestMatch);
+                        const topHit = hasExactMatch ? null : snapshot?.topHit ?? null;
+                        const bestMatchMeta = matchMetaText(bestMatch);
+                        const topHitMeta = matchMetaText(topHit);
 
                         return (
                           <article
@@ -1124,18 +1155,61 @@ export default function Home() {
                               <h3 className="track-title">{track.title}</h3>
                               <p className="track-meta">{track.artists.join(", ")}</p>
                               <p className="track-meta">{track.album}</p>
+                              <div className="track-match-compartment">
+                                <div className="row">
+                                  <span className="tiny muted">Match</span>
+                                  {snapshot?.error ? (
+                                    <Badge variant="danger">Error</Badge>
+                                  ) : hasExactMatch ? (
+                                    <Badge variant="success">Exact</Badge>
+                                  ) : snapshot ? (
+                                    <Badge variant="warning">Missing</Badge>
+                                  ) : (
+                                    <Badge variant="neutral">Pending</Badge>
+                                  )}
+                                </div>
+                                {snapshot?.error ? (
+                                  <p className="track-meta">{snapshot.error}</p>
+                                ) : hasExactMatch && bestMatch ? (
+                                  <>
+                                    <p className="track-meta">
+                                      osu: <span className="track-match-title">{bestMatch.artist} - {bestMatch.title}</span>
+                                    </p>
+                                    {bestMatchMeta ? <p className="track-meta">{bestMatchMeta}</p> : null}
+                                  </>
+                                ) : topHit ? (
+                                  <>
+                                    <p className="track-meta">No exact match yet.</p>
+                                    <p className="track-meta">Hover card for top hit.</p>
+                                  </>
+                                ) : snapshot ? (
+                                  <p className="track-meta">No hit from current search.</p>
+                                ) : (
+                                  <p className="track-meta">Run batch match to populate.</p>
+                                )}
+                              </div>
                               <div className="track-flags">
                                 <Badge variant="neutral">{track.sourceLabel}</Badge>
                                 {matchingTrackSet.has(track.id) ? <Badge variant="info">Matching...</Badge> : null}
-                                {snapshot?.matches.length ? <Badge variant="success">Matched</Badge> : null}
+                                {hasExactMatch ? <Badge variant="success">Matched</Badge> : null}
                                 {snapshot && !snapshot.error && snapshot.matches.length === 0 ? (
                                   <Badge variant="warning">Unmatched</Badge>
                                 ) : null}
-                                {snapshot?.topHit && snapshot.matches.length === 0 ? <Badge variant="info">Top hit available</Badge> : null}
+                                {topHit ? <Badge variant="info">Top hit on hover</Badge> : null}
                                 {snapshot?.error ? <Badge variant="danger">Match Error</Badge> : null}
                                 {generated ? <Badge variant="info">Generated</Badge> : null}
                               </div>
                             </div>
+                            {topHit ? (
+                              <div className="track-tophit-hover">
+                                <p className="tiny">Top hit suggestion</p>
+                                <p className="track-meta">
+                                  {topHit.artist} - {topHit.title}
+                                </p>
+                                {topHitMeta ? <p className="track-meta">{topHitMeta}</p> : null}
+                                <p className="track-meta">{topHit.status}</p>
+                              </div>
+                            ) : null}
                           </article>
                         );
                       })}
@@ -1185,56 +1259,25 @@ export default function Home() {
                           {osuSessionStatus.configured ? "Configured" : "Not configured"}
                         </Badge>
                       </div>
-                      <p className="tiny muted">
-                        Required for reliable search. The public endpoint currently ignores query terms.
-                      </p>
-                      <details className="inline-help">
-                        <summary className="tiny muted">How to get osu API credentials</summary>
-                        <div className="list">
-                          <p className="tiny muted">1. Sign in at osu.ppy.sh.</p>
-                          <p className="tiny muted">
-                            2. Open{" "}
-                            <Link href="https://osu.ppy.sh/home/account/edit#new-oauth-application" target="_blank" rel="noreferrer">
-                              Account Settings - OAuth Applications
-                            </Link>
-                            .
-                          </p>
-                          <p className="tiny muted">3. Create an OAuth app, then copy Client ID and Client Secret.</p>
-                          <p className="tiny muted">
-                            4. Paste them here and click <strong>Save osu API Session</strong>.
-                          </p>
-                        </div>
-                      </details>
-                      {osuSessionStatus.clientIdHint ? (
-                        <p className="tiny muted">Active client: {osuSessionStatus.clientIdHint}</p>
-                      ) : null}
-                      {osuSessionStatus.configured && osuSessionStatus.source === "env" ? (
+                      {!osuSessionStatus.configured ? (
                         <>
-                          <p className="tiny muted">Using server `.env` credentials. Restart dev server after editing `.env` values.</p>
                           <details className="inline-help">
-                            <summary className="tiny muted">Override with browser session credentials</summary>
+                            <summary className="tiny muted">How to get osu API credentials</summary>
                             <div className="list">
-                              <Input
-                                placeholder="osu OAuth Client ID"
-                                value={osuClientId}
-                                onChange={(event) => setOsuClientId(event.target.value)}
-                              />
-                              <Input
-                                placeholder="osu OAuth Client Secret"
-                                type="password"
-                                value={osuClientSecret}
-                                onChange={(event) => setOsuClientSecret(event.target.value)}
-                              />
-                              <div className="row-wrap">
-                                <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
-                                  Save osu API Session
-                                </Button>
-                              </div>
+                              <p className="tiny muted">1. Sign in at osu.ppy.sh.</p>
+                              <p className="tiny muted">
+                                2. Open{" "}
+                                <Link href="https://osu.ppy.sh/home/account/edit#new-oauth-application" target="_blank" rel="noreferrer">
+                                  Account Settings - OAuth Applications
+                                </Link>
+                                .
+                              </p>
+                              <p className="tiny muted">3. Create an OAuth app, then copy Client ID and Client Secret.</p>
+                              <p className="tiny muted">
+                                4. Paste them here and click <strong>Save osu API Session</strong>.
+                              </p>
                             </div>
                           </details>
-                        </>
-                      ) : (
-                        <>
                           <Input
                             placeholder="osu OAuth Client ID"
                             value={osuClientId}
@@ -1250,11 +1293,33 @@ export default function Home() {
                             <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
                               Save osu API Session
                             </Button>
-                            <Button variant="ghost" onClick={() => void clearOsuRuntimeSession()} disabled={busy}>
-                              Clear osu API Session
-                            </Button>
                           </div>
                         </>
+                      ) : (
+                        <details className="inline-help">
+                          <summary className="tiny muted">Override credentials for this browser (optional)</summary>
+                          <div className="list">
+                            <Input
+                              placeholder="osu OAuth Client ID"
+                              value={osuClientId}
+                              onChange={(event) => setOsuClientId(event.target.value)}
+                            />
+                            <Input
+                              placeholder="osu OAuth Client Secret"
+                              type="password"
+                              value={osuClientSecret}
+                              onChange={(event) => setOsuClientSecret(event.target.value)}
+                            />
+                            <div className="row-wrap">
+                              <Button variant="secondary" onClick={() => void saveOsuRuntimeSession()} disabled={busy}>
+                                Save osu API Session
+                              </Button>
+                              <Button variant="ghost" onClick={() => void clearOsuRuntimeSession()} disabled={busy}>
+                                Clear osu API Session
+                              </Button>
+                            </div>
+                          </div>
+                        </details>
                       )}
                     </div>
                     <Button onClick={() => void runBatchMatch()} disabled={matching || busy || selectedTrackIds.length === 0}>
@@ -1309,7 +1374,10 @@ export default function Home() {
                     </p>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">Star difficulty target (SR). Typical: 4.8 - 6.2</span>
+                      <span className="tiny muted generator-label">
+                        <Target size={12} />
+                        Star difficulty target (SR). Typical: 4.8 - 6.2
+                      </span>
                       <Input
                         type="number"
                         step={0.1}
@@ -1326,7 +1394,10 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">Mapper ID style lock. Typical: leave blank unless forcing style.</span>
+                      <span className="tiny muted generator-label">
+                        <User size={12} />
+                        Mapper ID style lock. Typical: leave blank unless forcing style.
+                      </span>
                       <Input
                         type="number"
                         value={generatorParams.mapperId ?? ""}
@@ -1337,7 +1408,10 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">Style year. Typical modern mapping: 2018 - current year.</span>
+                      <span className="tiny muted generator-label">
+                        <Calendar size={12} />
+                        Style year. Typical modern mapping: 2018 - current year.
+                      </span>
                       <Input
                         type="number"
                         min={2007}
@@ -1348,7 +1422,8 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">
+                      <span className="tiny muted generator-label">
+                        <Tags size={12} />
                         Descriptors (comma-separated). Typical: `jump aim, clean` or `streams, flow aim`.
                       </span>
                       <Input
@@ -1366,7 +1441,8 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">
+                      <span className="tiny muted generator-label">
+                        <Eye size={12} />
                         AR (Approach Rate). Typical: 9.0 - 10.3 for higher-diff standard maps.
                       </span>
                       <Input
@@ -1382,7 +1458,10 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">OD (Overall Difficulty). Typical: 7.5 - 10.</span>
+                      <span className="tiny muted generator-label">
+                        <Crosshair size={12} />
+                        OD (Overall Difficulty). Typical: 7.5 - 10.
+                      </span>
                       <Input
                         type="number"
                         step={0.1}
@@ -1396,7 +1475,10 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">CS (Circle Size). Typical standard: 3.8 - 4.2</span>
+                      <span className="tiny muted generator-label">
+                        <Circle size={12} />
+                        CS (Circle Size). Typical standard: 3.8 - 4.2
+                      </span>
                       <Input
                         type="number"
                         step={0.1}
@@ -1410,7 +1492,10 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">HP (drain). Typical: 4 - 7</span>
+                      <span className="tiny muted generator-label">
+                        <Heart size={12} />
+                        HP (drain). Typical: 4 - 7
+                      </span>
                       <Input
                         type="number"
                         step={0.1}
@@ -1424,7 +1509,10 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">CFG scale (style strength). Typical: 0.9 - 1.2</span>
+                      <span className="tiny muted generator-label">
+                        <SlidersHorizontal size={12} />
+                        CFG scale (style strength). Typical: 0.9 - 1.2
+                      </span>
                       <Input
                         type="number"
                         step={0.05}
@@ -1438,7 +1526,10 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">Sampling temperature. Typical: 0.9 - 1.1</span>
+                      <span className="tiny muted generator-label">
+                        <Flame size={12} />
+                        Sampling temperature. Typical: 0.9 - 1.1
+                      </span>
                       <Input
                         type="number"
                         step={0.05}
@@ -1452,7 +1543,10 @@ export default function Home() {
                     </div>
 
                     <div className="section-block generator-control">
-                      <span className="tiny muted">Top-p sampling. Typical: 0.9 - 0.98</span>
+                      <span className="tiny muted generator-label">
+                        <Gauge size={12} />
+                        Top-p sampling. Typical: 0.9 - 0.98
+                      </span>
                       <Input
                         type="number"
                         step={0.01}
@@ -1667,6 +1761,10 @@ export default function Home() {
                                   <span className="tiny">{track.title}</span>
                                   <Badge variant={best.status === "ranked" ? "success" : "warning"}>{best.status}</Badge>
                                 </div>
+                                <p className="tiny muted">
+                                  {best.artist} - {best.title}
+                                </p>
+                                {matchMetaText(best) ? <p className="tiny muted">{matchMetaText(best)}</p> : null}
                                 <p className="tiny muted">{best.rationale}</p>
                                 <Link
                                   href={best.url}
@@ -1703,6 +1801,7 @@ export default function Home() {
                                 <p className="tiny muted">
                                   Suggested: {topHit.artist} - {topHit.title}
                                 </p>
+                                {matchMetaText(topHit) ? <p className="tiny muted">{matchMetaText(topHit)}</p> : null}
                                 <p className="tiny muted">{topHit.rationale}</p>
                                 <Link
                                   href={topHit.url}

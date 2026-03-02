@@ -328,6 +328,7 @@ a {
   display: grid;
   gap: 6px;
   cursor: pointer;
+  position: relative;
   transition: border-color 130ms ease, transform 130ms ease, box-shadow 130ms ease;
 }
 
@@ -392,6 +393,41 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.track-match-compartment {
+  border: 1px solid rgba(124, 93, 64, 0.34);
+  background: rgba(14, 11, 9, 0.65);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.track-match-title {
+  color: #f8dfbf;
+}
+
+.track-tophit-hover {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: 7px;
+  border: 1px solid rgba(223, 161, 98, 0.62);
+  background: rgba(8, 6, 5, 0.95);
+  padding: 7px;
+  display: grid;
+  gap: 4px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 4;
+}
+
+.track-card:hover .track-tophit-hover,
+.track-card:focus-within .track-tophit-hover {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .list {
@@ -702,6 +738,12 @@ a {
   border: 1px solid rgba(122, 95, 70, 0.28);
   background: rgba(18, 14, 11, 0.4);
   padding: 7px;
+}
+
+.generator-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .generator-toggle-row {
