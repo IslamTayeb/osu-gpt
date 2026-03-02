@@ -7,6 +7,8 @@ import {
   normalizeAwsRuntimeSessionInput,
 } from "@/lib/awsSession";
 import { autoDetectAwsRuntimeResources, detectAwsBatchGpuHint } from "@/lib/awsAutoConfig";
+import { ensureAwsRuntimeResources } from "@/lib/awsProvision";
+import { ensureAwsWorkerImage } from "@/lib/awsWorkerImage";
 
 export const runtime = "nodejs";
 
@@ -18,6 +20,8 @@ type AwsAutoSessionBody = {
   s3Bucket?: string;
   s3Prefix?: string;
   cloudWatchLogGroup?: string;
+  ensureResources?: boolean;
+  ensureWorkerImage?: boolean;
 };
 
 function normalizeProfile(raw: string | undefined) {
@@ -51,7 +55,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const resources = await autoDetectAwsRuntimeResources({
+    let resources = await autoDetectAwsRuntimeResources({
       region,
       credentials: {
         accessKeyId: credentials.accessKeyId,
@@ -66,6 +70,65 @@ export async function POST(request: NextRequest) {
         cloudWatchLogGroup: body.cloudWatchLogGroup,
       },
     });
+    const ensureResources = body.ensureResources !== false;
+    const ensureWorkerImage = body.ensureWorkerImage !== false;
+    const provisionedResources: string[] = [];
+    const provisioningWarnings: string[] = [];
+    let resolvedJobImage = "";
+    if (ensureResources && ensureWorkerImage) {
+      try {
+        const workerImage = await ensureAwsWorkerImage({
+          region,
+          credentials: {
+            accessKeyId: credentials.accessKeyId,
+            secretAccessKey: credentials.secretAccessKey,
+            sessionToken: credentials.sessionToken,
+          },
+        });
+        resolvedJobImage = workerImage.imageUri ?? "";
+        if (workerImage.built && workerImage.imageUri) {
+          provisionedResources.push(`workerImage:${workerImage.imageUri}`);
+        }
+        provisioningWarnings.push(...workerImage.warnings);
+      } catch (error) {
+        provisioningWarnings.push(
+          `Could not auto-provision worker image: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (ensureResources) {
+      const ensured = await ensureAwsRuntimeResources({
+        region,
+        credentials: {
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+          sessionToken: credentials.sessionToken,
+        },
+        resources: {
+          batchQueue: resources.batchQueue,
+          batchJobDefinition: resources.batchJobDefinition,
+          s3Bucket: resources.s3Bucket,
+          jobImage: resolvedJobImage,
+          s3Prefix: resources.s3Prefix,
+          cloudWatchLogGroup: resources.cloudWatchLogGroup,
+        },
+      });
+      resources = {
+        ...resources,
+        batchQueue: ensured.batchQueue,
+        batchJobDefinition: ensured.batchJobDefinition,
+        s3Bucket: ensured.s3Bucket,
+        s3Prefix: ensured.s3Prefix,
+        cloudWatchLogGroup: ensured.cloudWatchLogGroup,
+        missing: ensured.missing,
+      };
+      for (const item of ensured.provisionedResources) {
+        if (!provisionedResources.includes(item)) {
+          provisionedResources.push(item);
+        }
+      }
+      provisioningWarnings.push(...ensured.warnings);
+    }
 
     const gpuHint =
       resources.batchQueue && resources.batchJobDefinition
@@ -101,11 +164,21 @@ export async function POST(request: NextRequest) {
 
     const cookieValue = encodeAwsRuntimeSession(session);
     const missing = resources.missing;
+    const warningParts: string[] = [];
+    if (provisionedResources.length > 0) {
+      warningParts.push(`Provisioned resources: ${provisionedResources.join(", ")}.`);
+    }
+    if (missing.length > 0) {
+      warningParts.push(`Credentials loaded. Fill missing fields: ${missing.join(", ")}.`);
+    }
+    if (provisioningWarnings.length > 0) {
+      warningParts.push(provisioningWarnings.join(" "));
+    }
     const response = NextResponse.json({
       ...maskAwsRuntimeSession(session),
       profile,
-      warning:
-        missing.length > 0 ? `Credentials loaded. Fill missing fields: ${missing.join(", ")}.` : undefined,
+      provisionedResources,
+      warning: warningParts.length > 0 ? warningParts.join(" ") : undefined,
     });
     response.cookies.set({
       name: AWS_RUNTIME_COOKIE,

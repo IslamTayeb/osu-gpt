@@ -200,9 +200,15 @@ export function useRuntimeActions(params: UseRuntimeActionsParams): UseRuntimeAc
           s3Bucket: awsS3Bucket,
           s3Prefix: awsS3Prefix,
           cloudWatchLogGroup: awsCloudWatchLogGroup,
+          ensureResources: true,
+          ensureWorkerImage: true,
         }),
       });
-      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string; warning?: string };
+      const body = (await response.json()) as HostedAwsSessionStatus & {
+        error?: string;
+        warning?: string;
+        provisionedResources?: string[];
+      };
       if (!response.ok) {
         throw new Error(body.error ?? "Failed to load AWS session from CLI.");
       }
@@ -217,9 +223,13 @@ export function useRuntimeActions(params: UseRuntimeActionsParams): UseRuntimeAc
       if (body.s3Bucket) setAwsS3Bucket(body.s3Bucket);
       if (body.s3Prefix) setAwsS3Prefix(body.s3Prefix);
       if (body.cloudWatchLogGroup) setAwsCloudWatchLogGroup(body.cloudWatchLogGroup);
+      const provisionedText =
+        body.provisionedResources && body.provisionedResources.length > 0
+          ? ` Provisioned: ${body.provisionedResources.join(", ")}.`
+          : "";
       setNotice(
         body.warning ??
-          `Hosted AWS session loaded from AWS CLI profile ${(body.profile ?? awsProfile) || "default"}.`,
+          `Hosted AWS session loaded from AWS CLI profile ${(body.profile ?? awsProfile) || "default"}.${provisionedText}`,
       );
       await fetchSession();
     } catch (err) {
@@ -258,22 +268,42 @@ export function useRuntimeActions(params: UseRuntimeActionsParams): UseRuntimeAc
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/runtime/aws/session/auto", {
+      const payload = {
+        profile: awsProfile,
+        region: awsRegion,
+        batchQueue: awsBatchQueue,
+        batchJobDefinition: awsBatchJobDefinition,
+        s3Bucket: awsS3Bucket,
+        s3Prefix: awsS3Prefix,
+        cloudWatchLogGroup: awsCloudWatchLogGroup,
+        ensureResources: true,
+        ensureWorkerImage: true,
+      };
+
+      let response = await fetch("/api/runtime/aws/session/auto", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          profile: awsProfile,
-          region: awsRegion,
-          batchQueue: awsBatchQueue,
-          batchJobDefinition: awsBatchJobDefinition,
-          s3Bucket: awsS3Bucket,
-          s3Prefix: awsS3Prefix,
-          cloudWatchLogGroup: awsCloudWatchLogGroup,
-        }),
+        body: JSON.stringify(payload),
       });
-      const body = (await response.json()) as HostedAwsSessionStatus & { error?: string; warning?: string };
+      let body = (await response.json()) as HostedAwsSessionStatus & {
+        error?: string;
+        warning?: string;
+        provisionedResources?: string[];
+      };
       if (!response.ok) {
-        throw new Error(body.error ?? "Failed to auto-load AWS session.");
+        response = await fetch("/api/runtime/aws/session/from-cli", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        body = (await response.json()) as HostedAwsSessionStatus & {
+          error?: string;
+          warning?: string;
+          provisionedResources?: string[];
+        };
+        if (!response.ok) {
+          throw new Error(body.error ?? "Failed to auto-load AWS session.");
+        }
       }
 
       setAwsSessionStatus(body);
@@ -286,9 +316,13 @@ export function useRuntimeActions(params: UseRuntimeActionsParams): UseRuntimeAc
       if (body.s3Bucket) setAwsS3Bucket(body.s3Bucket);
       if (body.s3Prefix) setAwsS3Prefix(body.s3Prefix);
       if (body.cloudWatchLogGroup) setAwsCloudWatchLogGroup(body.cloudWatchLogGroup);
+      const provisionedText =
+        body.provisionedResources && body.provisionedResources.length > 0
+          ? ` Provisioned: ${body.provisionedResources.join(", ")}.`
+          : "";
       setNotice(
         body.warning ??
-          `Hosted AWS session auto-loaded via AWS SDK chain (${(body.profile ?? awsProfile) || "default"}).`,
+          `Hosted AWS session configured via one-click setup (${(body.profile ?? awsProfile) || "default"}).${provisionedText}`,
       );
       await fetchSession();
     } catch (err) {

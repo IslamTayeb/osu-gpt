@@ -2,11 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCcw } from "lucide-react";
-import type { GenerationJob, SpotifyImportStatus, Track, TrackMatchSnapshot } from "@/lib/types";
+import type {
+  GenerationJob,
+  MatchResult,
+  SpotifyImportStatus,
+  Track,
+  TrackMatchSnapshot,
+} from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { AuthShell } from "@/components/workspace/auth-shell";
 import { FiltersPane } from "@/components/workspace/filters-pane";
 import { LibraryPane } from "@/components/workspace/library-pane";
+import type { ExactReviewItem, NonExactReviewItem } from "@/components/workspace/match-review-panel";
 import { ActionsPane } from "@/components/workspace/right-pane/actions-pane";
 import type { GenerationProfileSectionProps } from "@/components/workspace/right-pane/types";
 import type {
@@ -93,6 +100,12 @@ export default function Home() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [lastMatchSummary, setLastMatchSummary] = useState<BatchMatchResponse["summary"] | null>(null);
+  const [promotedTopHitsByTrackId, setPromotedTopHitsByTrackId] = useState<
+    Record<string, MatchResult>
+  >({});
+  const [approvedMatchesByTrackId, setApprovedMatchesByTrackId] = useState<
+    Record<string, MatchResult>
+  >({});
 
   const debouncedQueryRef = useRef("");
   const libraryScrollRef = useRef<HTMLDivElement | null>(null);
@@ -144,12 +157,103 @@ export default function Home() {
     [jobs],
   );
 
-  const { selectionStats, unmatchedSelectedIds, matchedSelected, unmatchedTopHits } = useSelectionDerived({
+  const { selectionStats, matchedSelected, unmatchedTopHits } = useSelectionDerived({
     selectedTrackIds,
     matchSnapshots,
     completedTrackIdSet,
     trackById,
   });
+
+  const exactReviewItems = useMemo<ExactReviewItem[]>(() => {
+    const byTrackId = new Map<string, ExactReviewItem>();
+    for (const { track, snapshot } of matchedSelected) {
+      const exactMatches = snapshot.matches.slice(0, 5);
+      if (exactMatches.length === 0) continue;
+      byTrackId.set(track.id, {
+        track,
+        matches: exactMatches,
+        source: "exact",
+        strongMatch: snapshot.strongMatch,
+      });
+    }
+
+    for (const trackId of selectedTrackIds) {
+      if (byTrackId.has(trackId)) continue;
+      const track = trackById.get(trackId);
+      const promoted = promotedTopHitsByTrackId[trackId];
+      if (!track || !promoted) continue;
+      byTrackId.set(trackId, {
+        track,
+        matches: [promoted],
+        source: "promoted",
+        strongMatch: false,
+      });
+    }
+
+    return Array.from(byTrackId.values());
+  }, [matchedSelected, promotedTopHitsByTrackId, selectedTrackIds, trackById]);
+
+  const nonExactReviewItems = useMemo<NonExactReviewItem[]>(() => {
+    const items: NonExactReviewItem[] = [];
+    for (const { track, snapshot } of unmatchedTopHits) {
+      if (!track || !snapshot?.topHit || promotedTopHitsByTrackId[track.id]) {
+        continue;
+      }
+      items.push({
+        track,
+        topHit: snapshot.topHit,
+      });
+    }
+    return items;
+  }, [unmatchedTopHits, promotedTopHitsByTrackId]);
+
+  const approvedSelectedCount = useMemo(
+    () => selectedTrackIds.filter((trackId) => Boolean(approvedMatchesByTrackId[trackId])).length,
+    [selectedTrackIds, approvedMatchesByTrackId],
+  );
+
+  const selectedTrackIdsForGeneration = useMemo(
+    () => selectedTrackIds.filter((trackId) => !approvedMatchesByTrackId[trackId]),
+    [selectedTrackIds, approvedMatchesByTrackId],
+  );
+
+  const handlePromoteTopHit = useCallback(
+    (trackId: string) => {
+      const snapshot = matchSnapshots[trackId];
+      const topHit = snapshot?.topHit;
+      if (!topHit) return;
+      setPromotedTopHitsByTrackId((previous) => ({ ...previous, [trackId]: topHit }));
+    },
+    [matchSnapshots],
+  );
+
+  const handleRemovePromotedTopHit = useCallback((trackId: string) => {
+    setPromotedTopHitsByTrackId((previous) => {
+      if (!previous[trackId]) return previous;
+      const next = { ...previous };
+      delete next[trackId];
+      return next;
+    });
+    setApprovedMatchesByTrackId((previous) => {
+      if (!previous[trackId]) return previous;
+      const next = { ...previous };
+      delete next[trackId];
+      return next;
+    });
+  }, []);
+
+  const handleApproveMatch = useCallback((trackId: string, match: MatchResult) => {
+    setApprovedMatchesByTrackId((previous) => ({ ...previous, [trackId]: match }));
+  }, []);
+
+  const handleClearApprovedMatch = useCallback((trackId: string) => {
+    setApprovedMatchesByTrackId((previous) => {
+      if (!previous[trackId]) return previous;
+      const next = { ...previous };
+      delete next[trackId];
+      return next;
+    });
+  }, []);
 
   const fetchSession = useCallback(async () => {
     const response = await fetch("/api/session", { cache: "no-store" });
@@ -489,10 +593,11 @@ export default function Home() {
     onSaveAwsRuntimeResources: saveAwsRuntimeResources,
     onSaveAwsRuntimeSession: saveAwsRuntimeSession,
     busy,
-    unmatchedSelectedCount: unmatchedSelectedIds.length,
+    approvedSelectedCount,
+    generatableSelectedCount: selectedTrackIdsForGeneration.length,
     selectedTrackCount: selectedTrackIds.length,
-    onGenerateUnmatched: async () => queueGeneration(unmatchedSelectedIds),
-    onGenerateSelected: async () => queueGeneration(selectedTrackIds),
+    onGenerateSelected: async () => queueGeneration(selectedTrackIdsForGeneration),
+    onGenerateAllSelected: async () => queueGeneration(selectedTrackIds),
   };
 
   if (!spotifyConnected) {
@@ -508,7 +613,7 @@ export default function Home() {
       <main className="workspace">
         <header className="workspace-header">
           <div>
-            <h1 className="workspace-title">osu-gpt / Dense Workspace</h1>
+            <h1 className="workspace-title">osu-gpt Workspace</h1>
             <p className="workspace-meta">
               Liked Songs: {totalTracks} | Selected: {selectionStats.total} | Matched:{" "}
               {selectionStats.matched} | Unmatched: {selectionStats.unmatched} | Generated:{" "}
@@ -556,6 +661,25 @@ export default function Home() {
             onClearSelection={clearSelection}
             pageTracksCount={tracks.length}
             importStatus={importStatus}
+            busy={busy}
+            matching={matching}
+            osuSessionStatus={osuSessionStatus}
+            osuClientId={osuClientId}
+            onOsuClientIdChange={setOsuClientId}
+            osuClientSecret={osuClientSecret}
+            onOsuClientSecretChange={setOsuClientSecret}
+            onSaveOsuRuntimeSession={saveOsuRuntimeSession}
+            onClearOsuRuntimeSession={clearOsuRuntimeSession}
+            onRunBatchMatch={runBatchMatch}
+            selectedTrackCount={selectedTrackIds.length}
+            lastMatchSummary={lastMatchSummary}
+            exactReviewItems={exactReviewItems}
+            nonExactReviewItems={nonExactReviewItems}
+            approvedMatchesByTrackId={approvedMatchesByTrackId}
+            onApproveMatch={handleApproveMatch}
+            onClearApprovedMatch={handleClearApprovedMatch}
+            onPromoteTopHit={handlePromoteTopHit}
+            onRemovePromotedTopHit={handleRemovePromotedTopHit}
           />
 
           <LibraryPane
@@ -581,21 +705,9 @@ export default function Home() {
             jobsLoadedOnce={jobsLoadedOnce}
             spotdlAckAt={spotdlAckAt}
             busy={busy}
-            matching={matching}
             onAcknowledgeSpotdl={acknowledgeSpotdl}
-            osuSessionStatus={osuSessionStatus}
-            osuClientId={osuClientId}
-            onOsuClientIdChange={setOsuClientId}
-            osuClientSecret={osuClientSecret}
-            onOsuClientSecretChange={setOsuClientSecret}
-            onSaveOsuRuntimeSession={saveOsuRuntimeSession}
-            onClearOsuRuntimeSession={clearOsuRuntimeSession}
-            onRunBatchMatch={runBatchMatch}
             selectedTrackCount={selectedTrackIds.length}
-            lastMatchSummary={lastMatchSummary}
             generationProfileProps={generationProfileProps}
-            matchedSelected={matchedSelected}
-            unmatchedTopHits={unmatchedTopHits}
             jobs={jobs}
             jobsLoading={jobsLoading}
             onDownloadZip={downloadZip}

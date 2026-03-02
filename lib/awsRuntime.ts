@@ -6,6 +6,7 @@ import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/clien
 import { AwsRuntimeSession } from "./awsSession";
 import { GenerationJob, Track, Artifact } from "./types";
 import { readStore, updateStore } from "./store";
+import { applyGenerationPreset, generatorParamTemplate, toHydraOverrides } from "./generatorConfig";
 
 const artifactExtensions = new Set([".osu", ".osz", ".json", ".txt", ".log"]);
 
@@ -65,6 +66,43 @@ async function streamBodyToBuffer(body: unknown): Promise<Buffer> {
 
 function stableArtifactId(jobId: string, key: string) {
   return createHash("sha1").update(`${jobId}:${key}`).digest("hex").slice(0, 24);
+}
+
+function hostedGeneratorHydraOverrides(job: GenerationJob, track: Track) {
+  const merged = applyGenerationPreset(
+    {
+      ...generatorParamTemplate,
+      ...job.generatorParams,
+    },
+    job.preset,
+  );
+
+  if (!merged.title) {
+    merged.title = track.title;
+  }
+  if (!merged.artist) {
+    merged.artist = track.artists.join(", ");
+  }
+  if (!merged.titleUnicode) {
+    merged.titleUnicode = merged.title;
+  }
+  if (!merged.artistUnicode) {
+    merged.artistUnicode = merged.artist;
+  }
+  if (!merged.creator) {
+    merged.creator = "osu-gpt";
+  }
+  if (!merged.version) {
+    merged.version = "osu-gpt generated";
+  }
+  if (merged.year === null || merged.year === undefined) {
+    merged.year = new Date().getUTCFullYear();
+  }
+  if (merged.gamemode === null || merged.gamemode === undefined) {
+    merged.gamemode = 0;
+  }
+
+  return toHydraOverrides(merged);
 }
 
 async function fetchLogTail(
@@ -128,6 +166,8 @@ export async function submitHostedAwsJob(job: GenerationJob, track: Track, sessi
   const { batch } = buildAwsClients(session);
   const prefix = hostedPrefix(session, job.id);
   const paramsJson = JSON.stringify(job.generatorParams ?? {});
+  const hydraOverrides = hostedGeneratorHydraOverrides(job, track);
+  const hydraOverridesJson = JSON.stringify(hydraOverrides);
 
   const response = await batch.send(
     new SubmitJobCommand({
@@ -144,6 +184,7 @@ export async function submitHostedAwsJob(job: GenerationJob, track: Track, sessi
         output_s3_bucket: session.s3Bucket,
         output_s3_prefix: prefix,
         generator_params_json: paramsJson,
+        generator_hydra_overrides_json: hydraOverridesJson,
       },
       containerOverrides: {
         environment: [
@@ -155,6 +196,7 @@ export async function submitHostedAwsJob(job: GenerationJob, track: Track, sessi
           { name: "OSUGPT_OUTPUT_S3_BUCKET", value: session.s3Bucket },
           { name: "OSUGPT_OUTPUT_S3_PREFIX", value: prefix },
           { name: "OSUGPT_GENERATOR_PARAMS_JSON", value: paramsJson },
+          { name: "OSUGPT_GENERATOR_HYDRA_OVERRIDES_JSON", value: hydraOverridesJson },
         ],
       },
       tags: {

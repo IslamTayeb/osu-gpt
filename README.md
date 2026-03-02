@@ -59,6 +59,18 @@ SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/callback
 OSU_CLIENT_ID=...      # recommended for reliable osu matching (server-side)
 OSU_CLIENT_SECRET=...  # recommended for reliable osu matching (server-side)
 OSU_API_KEY=...        # legacy key, currently unused by matching
+
+# Hosted AWS auto-provisioning defaults (optional)
+AWS_BATCH_JOB_IMAGE=...          # optional override; if unset, one-click setup will try to auto-build worker image
+AWS_BATCH_INSTANCE_TYPE=g4dn.xlarge
+AWS_BATCH_MAX_VCPUS=16
+AWS_BATCH_JOB_VCPU=4
+AWS_BATCH_JOB_MEMORY=16384
+AWS_BATCH_JOB_GPU=1
+AWS_BATCH_WORKER_ECR_REPOSITORY=osu-gpt-worker
+AWS_BATCH_WORKER_IMAGE_TAG=latest
+AWS_BATCH_WORKER_DISABLE_CODEBUILD=false
+AWS_BATCH_WORKER_CODEBUILD_PROJECT_NAME=osu-gpt-worker-image-build
 ```
 
 ## API key setup (osu + AWS)
@@ -86,23 +98,21 @@ Hosted jobs require your own AWS Batch + S3 setup and session credentials entere
    - `aws configure sso` (or `aws configure`)
 2. If using SSO locally, refresh login:
    - `aws sso login --profile default` (replace profile if needed)
-3. In AWS, prepare:
-   - Batch queue
-   - Batch job definition
-   - S3 bucket/prefix for artifacts
-   - (optional) CloudWatch log group
+3. (Optional) install and run Docker locally to speed up image build; if Docker is unavailable, one-click setup
+   falls back to AWS CodeBuild.
 4. In the app (default runtime is hosted AWS), fill:
    - AWS profile (usually `default`)
    - Region
-   - Batch Queue
-   - Batch Job Definition
-   - S3 Bucket / Prefix
+   - Batch Queue / Job Definition / S3 fields can be left blank for first-time setup
    - CloudWatch Log Group (optional)
-5. Click `Auto-load AWS (recommended)` first.
+5. Click `One-click AWS Setup (recommended)` first.
    - Uses AWS SDK credential chain (env vars, shared profile/SSO cache, or instance role).
+   - Attempts to auto-build and push an AWS worker image to ECR.
+   - Uses local Docker when available, otherwise falls back to AWS CodeBuild automatically.
    - Attempts to auto-discover queue/job definition/S3 bucket if missing.
-6. Fallback: click `Load from AWS CLI`.
-7. Manual fallback (advanced): fill direct key material and click `Save AWS Session`:
+   - If still missing, attempts to provision missing S3 + AWS Batch resources automatically.
+   - If image build still fails, set `AWS_BATCH_JOB_IMAGE` manually.
+6. Manual fallback (advanced): fill direct key material and click `Save AWS Session`:
    - Access Key ID
    - Secret Access Key
    - Session Token (optional)

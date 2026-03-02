@@ -62,8 +62,9 @@ export type GenerationProfileSectionProps = {
   onSaveAwsRuntimeResources: () => Promise<void>;
   onSaveAwsRuntimeSession: () => Promise<void>;
   busy: boolean;
-  unmatchedSelectedCount: number;
+  approvedSelectedCount: number;
+  generatableSelectedCount: number;
   selectedTrackCount: number;
-  onGenerateUnmatched: () => Promise<void>;
   onGenerateSelected: () => Promise<void>;
+  onGenerateAllSelected: () => Promise<void>;
 };

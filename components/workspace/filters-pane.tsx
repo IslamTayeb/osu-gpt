@@ -3,10 +3,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { MatchReviewPanel } from "@/components/workspace/match-review-panel";
 import { Progress } from "@/components/ui/progress";
 import { Select } from "@/components/ui/select";
 import { importProgress } from "@/lib/homeUi";
-import type { SpotifyImportStatus } from "@/lib/types";
+import type { BatchMatchResponse, OsuSessionStatus } from "@/lib/homeTypes";
+import type { MatchResult, SpotifyImportStatus } from "@/lib/types";
+import type { ExactReviewItem, NonExactReviewItem } from "@/components/workspace/match-review-panel";
 
 type MatchFilter = "all" | "matched" | "unmatched" | "generated";
 type ProviderFilter = "all" | "spotify" | "apple";
@@ -34,6 +37,25 @@ type FiltersPaneProps = {
   onClearSelection: () => void;
   pageTracksCount: number;
   importStatus: SpotifyImportStatus;
+  busy: boolean;
+  matching: boolean;
+  osuSessionStatus: OsuSessionStatus;
+  osuClientId: string;
+  onOsuClientIdChange: (value: string) => void;
+  osuClientSecret: string;
+  onOsuClientSecretChange: (value: string) => void;
+  onSaveOsuRuntimeSession: () => Promise<void>;
+  onClearOsuRuntimeSession: () => Promise<void>;
+  onRunBatchMatch: () => Promise<void>;
+  selectedTrackCount: number;
+  lastMatchSummary: BatchMatchResponse["summary"] | null;
+  exactReviewItems: ExactReviewItem[];
+  nonExactReviewItems: NonExactReviewItem[];
+  approvedMatchesByTrackId: Record<string, MatchResult>;
+  onApproveMatch: (trackId: string, match: MatchResult) => void;
+  onClearApprovedMatch: (trackId: string) => void;
+  onPromoteTopHit: (trackId: string) => void;
+  onRemovePromotedTopHit: (trackId: string) => void;
 };
 
 export function FiltersPane(props: FiltersPaneProps) {
@@ -59,6 +81,25 @@ export function FiltersPane(props: FiltersPaneProps) {
     onClearSelection,
     pageTracksCount,
     importStatus,
+    busy,
+    matching,
+    osuSessionStatus,
+    osuClientId,
+    onOsuClientIdChange,
+    osuClientSecret,
+    onOsuClientSecretChange,
+    onSaveOsuRuntimeSession,
+    onClearOsuRuntimeSession,
+    onRunBatchMatch,
+    selectedTrackCount,
+    lastMatchSummary,
+    exactReviewItems,
+    nonExactReviewItems,
+    approvedMatchesByTrackId,
+    onApproveMatch,
+    onClearApprovedMatch,
+    onPromoteTopHit,
+    onRemovePromotedTopHit,
   } = props;
 
   return (
@@ -69,7 +110,7 @@ export function FiltersPane(props: FiltersPaneProps) {
           Server-backed filtering and pagination for large liked-song libraries.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="filters-content-scroll">
         <div className="section-block">
           <span className="section-label">Search</span>
           <div className="row-wrap">
@@ -178,6 +219,30 @@ export function FiltersPane(props: FiltersPaneProps) {
             {importStatus.importedCount ? `(${importStatus.importedCount} processed)` : ""}
           </p>
         </div>
+
+        <div className="divider" />
+
+        <MatchReviewPanel
+          busy={busy}
+          matching={matching}
+          osuSessionStatus={osuSessionStatus}
+          osuClientId={osuClientId}
+          onOsuClientIdChange={onOsuClientIdChange}
+          osuClientSecret={osuClientSecret}
+          onOsuClientSecretChange={onOsuClientSecretChange}
+          onSaveOsuRuntimeSession={onSaveOsuRuntimeSession}
+          onClearOsuRuntimeSession={onClearOsuRuntimeSession}
+          onRunBatchMatch={onRunBatchMatch}
+          selectedTrackCount={selectedTrackCount}
+          lastMatchSummary={lastMatchSummary}
+          exactReviewItems={exactReviewItems}
+          nonExactReviewItems={nonExactReviewItems}
+          approvedMatchesByTrackId={approvedMatchesByTrackId}
+          onApproveMatch={onApproveMatch}
+          onClearApprovedMatch={onClearApprovedMatch}
+          onPromoteTopHit={onPromoteTopHit}
+          onRemovePromotedTopHit={onRemovePromotedTopHit}
+        />
       </CardContent>
     </Card>
   );

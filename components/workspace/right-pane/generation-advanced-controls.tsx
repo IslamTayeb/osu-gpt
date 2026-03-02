@@ -23,6 +23,48 @@ export function GenerationAdvancedControls({
       <summary className="tiny muted">Advanced generator controls</summary>
       <div className="list">
         <div className="section-block generator-control">
+          <span className="tiny muted">CFG scale (style strength). Typical: 0.9 - 1.2</span>
+          <Input
+            type="number"
+            step={0.05}
+            min={0.5}
+            max={2}
+            value={generatorParams.cfgScale ?? ""}
+            onChange={(event) =>
+              onUpdateGeneratorParam("cfgScale", event.target.value === "" ? null : Number(event.target.value))
+            }
+          />
+        </div>
+        <div className="section-block generator-control">
+          <span className="tiny muted">Sampling temperature. Typical: 0.9 - 1.1</span>
+          <Input
+            type="number"
+            step={0.05}
+            min={0.4}
+            max={2}
+            value={generatorParams.temperature ?? ""}
+            onChange={(event) =>
+              onUpdateGeneratorParam(
+                "temperature",
+                event.target.value === "" ? null : Number(event.target.value),
+              )
+            }
+          />
+        </div>
+        <div className="section-block generator-control">
+          <span className="tiny muted">Top-p sampling. Typical: 0.9 - 0.98</span>
+          <Input
+            type="number"
+            step={0.01}
+            min={0}
+            max={1}
+            value={generatorParams.topP ?? ""}
+            onChange={(event) =>
+              onUpdateGeneratorParam("topP", event.target.value === "" ? null : Number(event.target.value))
+            }
+          />
+        </div>
+        <div className="section-block generator-control">
           <span className="tiny muted">Slider multiplier (SV base). Typical: 1.2 - 1.8</span>
           <Input
             type="number"

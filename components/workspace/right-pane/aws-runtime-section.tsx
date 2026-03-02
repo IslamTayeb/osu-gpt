@@ -73,7 +73,7 @@ export function AwsRuntimeSection({
       </div>
       <p className="tiny muted">
         Quick setup: run <code>aws configure sso</code> once, then{" "}
-        <code>aws sso login --profile {awsProfile.trim() || "default"}</code>, then click auto-load.
+        <code>aws sso login --profile {awsProfile.trim() || "default"}</code>, then click one-click setup.
       </p>
       <div className="row-wrap">
         <Input
@@ -82,7 +82,7 @@ export function AwsRuntimeSection({
           onChange={(event) => onAwsProfileChange(event.target.value)}
         />
         <Button variant="secondary" onClick={() => void onAutoLoadAwsRuntimeSession()} disabled={busy}>
-          Auto-load AWS (recommended)
+          One-click AWS Setup (recommended)
         </Button>
         <Button variant="secondary" onClick={() => void onLoadAwsRuntimeSessionFromCli()} disabled={busy}>
           Load from AWS CLI
@@ -96,7 +96,8 @@ export function AwsRuntimeSection({
       </div>
       <p className="tiny muted">
         Auto-load resolves credentials from AWS SDK chain (env vars, shared config/profile, SSO cache, or
-        instance role) and tries to discover queue/job definition/S3 bucket automatically.
+        instance role), builds/pushes a worker image if needed, discovers queue/job definition/S3 bucket, and
+        creates missing resources.
       </p>
       <Input
         placeholder="Region (e.g. us-east-1)"

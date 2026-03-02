@@ -4,10 +4,7 @@ import {
   Circle,
   Crosshair,
   Eye,
-  Flame,
-  Gauge,
   Heart,
-  SlidersHorizontal,
   Sparkles,
   Tags,
   Target,
@@ -73,10 +70,11 @@ export function GenerationProfileSection({
   onSaveAwsRuntimeResources,
   onSaveAwsRuntimeSession,
   busy,
-  unmatchedSelectedCount,
+  approvedSelectedCount,
+  generatableSelectedCount,
   selectedTrackCount,
-  onGenerateUnmatched,
   onGenerateSelected,
+  onGenerateAllSelected,
 }: GenerationProfileSectionProps) {
   return (
     <div className="section-block">
@@ -131,6 +129,8 @@ export function GenerationProfileSection({
         Style preset applies descriptors plus optional AR/OD/CS/SR defaults. Mapper lock is independent and
         optional.
       </p>
+
+      <div className="divider" />
 
       <div className="section-block generator-control">
         <span className="tiny muted generator-label">
@@ -268,59 +268,7 @@ export function GenerationProfileSection({
         />
       </div>
 
-      <div className="section-block generator-control">
-        <span className="tiny muted generator-label">
-          <SlidersHorizontal size={12} />
-          CFG scale (style strength, optional). Typical: 0.9 - 1.2
-        </span>
-        <Input
-          type="number"
-          step={0.05}
-          min={0.5}
-          max={2}
-          value={generatorParams.cfgScale ?? ""}
-          onChange={(event) =>
-            onUpdateGeneratorParam("cfgScale", event.target.value === "" ? null : Number(event.target.value))
-          }
-        />
-      </div>
-
-      <div className="section-block generator-control">
-        <span className="tiny muted generator-label">
-          <Flame size={12} />
-          Sampling temperature (optional). Typical: 0.9 - 1.1
-        </span>
-        <Input
-          type="number"
-          step={0.05}
-          min={0.4}
-          max={2}
-          value={generatorParams.temperature ?? ""}
-          onChange={(event) =>
-            onUpdateGeneratorParam(
-              "temperature",
-              event.target.value === "" ? null : Number(event.target.value),
-            )
-          }
-        />
-      </div>
-
-      <div className="section-block generator-control">
-        <span className="tiny muted generator-label">
-          <Gauge size={12} />
-          Top-p sampling (optional). Typical: 0.9 - 0.98
-        </span>
-        <Input
-          type="number"
-          step={0.01}
-          min={0}
-          max={1}
-          value={generatorParams.topP ?? ""}
-          onChange={(event) =>
-            onUpdateGeneratorParam("topP", event.target.value === "" ? null : Number(event.target.value))
-          }
-        />
-      </div>
+      <div className="divider" />
 
       <div className="row-wrap generator-toggle-row">
         <label className="tiny muted row-wrap">
@@ -350,6 +298,8 @@ export function GenerationProfileSection({
         generatorParams={generatorParams}
         onUpdateGeneratorParam={onUpdateGeneratorParam}
       />
+
+      <div className="divider" />
 
       <span className="tiny muted">Job timeout (seconds)</span>
       <Input
@@ -400,6 +350,8 @@ export function GenerationProfileSection({
         />
       ) : null}
 
+      <div className="divider" />
+
       <details className="inline-help">
         <summary className="tiny muted">How to get required API keys (osu + AWS)</summary>
         <div className="list tiny muted">
@@ -422,17 +374,25 @@ export function GenerationProfileSection({
         </div>
       </details>
 
+      <p className="tiny muted">
+        {approvedSelectedCount > 0
+          ? `Approved matched previews: ${approvedSelectedCount}.`
+          : "Approve matched previews to skip generation for those tracks."}
+      </p>
+
+      <div className="divider" />
+
       <div className="row-wrap">
-        <Button onClick={() => void onGenerateUnmatched()} disabled={busy || unmatchedSelectedCount === 0}>
+        <Button onClick={() => void onGenerateSelected()} disabled={busy || generatableSelectedCount === 0}>
           <Sparkles size={14} />
-          Generate unmatched ({unmatchedSelectedCount})
+          Generate selected ({generatableSelectedCount})
         </Button>
         <Button
           variant="secondary"
-          onClick={() => void onGenerateSelected()}
+          onClick={() => void onGenerateAllSelected()}
           disabled={busy || selectedTrackCount === 0}
         >
-          Generate selected ({selectedTrackCount})
+          Force all selected ({selectedTrackCount})
         </Button>
       </div>
     </div>

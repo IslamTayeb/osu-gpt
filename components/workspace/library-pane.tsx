@@ -133,7 +133,6 @@ export function LibraryPane(props: LibraryPaneProps) {
                           <p className="track-meta">{track.artists.join(", ")}</p>
                           <p className="track-meta">{track.album}</p>
                           <div className="track-flags">
-                            <Badge variant="neutral">{track.sourceLabel}</Badge>
                             {generated ? <Badge variant="info">Generated</Badge> : null}
                           </div>
                         </div>
