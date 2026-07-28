@@ -1,160 +1,95 @@
-# osu-gpt web MVP
+# osu-gpt
 
-Simple v1 implementation of:
+Turn your Spotify liked songs into playable osu! beatmaps.
 
-- Spotify import (liked songs only)
-- osu! map lookup (Ranked/Loved, title+artist substring match)
-- Match-first flow with auto-generate fallback
-- spotdl default downloader (with one-time acknowledgment)
-- Mapperatorinator generation jobs (local + hosted AWS Batch or SageMaker Processing)
-- Artifact download with 7-day expiration metadata
+Import your library, check whether a Ranked or Loved map already exists, and
+generate the rest with [Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)
+on a GPU.
 
-## Quick setup (recommended)
-
-From this `web` directory:
+## Setup
 
 ```bash
-./install.sh
-npm run dev
-```
-
-The setup script (`scripts/dev-setup.sh`) does the following:
-
-- installs `npm` dependencies
-- creates `.env` from a template if missing
-- checks local generation prerequisites (`spotdl`, `python`, `../Mapperatorinator`)
-- checks whether `aws` CLI is available for hosted runtime workflows
-
-If you have access to a Mapperatorinator repo and want to clone it during setup:
-
-```bash
-./install.sh --clone-mapperatorinator --mapper-repo <git-url>
-```
-
-You can also set `MAPPERATORINATOR_REPO=<git-url>` instead of passing `--mapper-repo`.
-`npm run setup:dev` is still available and runs the same setup flow.
-
-## Run (manual)
-
-```bash
-cd web
+cp .env.example .env   # fill in the values
 npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`.
+You also need, on your PATH: `python`, `spotdl`, `yt-dlp`, `ffmpeg`, `ffprobe`.
 
-## Required env (set in repo root `.env`)
+A Mapperatorinator checkout must sit next to this repo (`../Mapperatorinator`)
+or be pointed at with `MAPPERATORINATOR_DIR`. Pin it to the commit in
+`config/mapperatorinator.pin.json`; the settings panel warns when the checkout
+drifts from it.
 
-```env
-APP_SECRET=replace-with-long-random-string
-SPOTIFY_CLIENT_ID=...
-SPOTIFY_CLIENT_SECRET=...
-SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/callback
+## Where maps are generated
+
+**Duke compute cluster (default).** Jobs are submitted over `ssh dcc` as Slurm
+batches. Before submitting, the app asks `gpuavail` which GPUs are free and
+takes the best bf16-capable card it can get right now — otherwise it goes
+straight to a 2080 rather than waiting, since the queue for the good cards runs
+from seconds to a couple of hours depending on the time of day.
+
+Cluster paths live in `config/mapperatorinator.pin.json`. One-time setup:
+
+```bash
+ssh dcc
+ENV=/hpc/group/GROUP/NETID/envs/mapperatorinator
+REPO=/hpc/group/GROUP/NETID/projects/Mapperatorinator
+git -C $REPO fetch origin && git -C $REPO reset --hard origin/osu-gpt/batch-driver
+$ENV/bin/pip install -r $REPO/requirements.txt
+mkdir -p /work/NETID/osu-gpt/jobs
 ```
 
-## Optional env
+Model weights are cached at `/work/NETID/Mapperatorinator/cache/huggingface`.
+Pre-warm them from the login node (compute nodes may lack internet), and note
+that `/work` purges files untouched for 75 days.
 
-```env
-OSU_CLIENT_ID=...      # recommended for reliable osu matching (server-side)
-OSU_CLIENT_SECRET=...  # recommended for reliable osu matching (server-side)
-OSU_API_KEY=...        # legacy key, currently unused by matching
+**This machine.** Runs `inference.py` locally, one job at a time.
 
-# Hosted AWS auto-provisioning defaults (optional)
-AWS_BATCH_JOB_IMAGE=...          # optional override; if unset, one-click setup will try to auto-build worker image
-AWS_BATCH_INSTANCE_TYPE=g4dn.xlarge
-AWS_BATCH_MAX_VCPUS=16
-AWS_BATCH_JOB_VCPU=4
-AWS_BATCH_JOB_MEMORY=12288
-AWS_BATCH_JOB_GPU=1
-AWS_BATCH_WORKER_ECR_REPOSITORY=osu-gpt-worker
-AWS_BATCH_WORKER_IMAGE_TAG=latest
-AWS_BATCH_WORKER_DISABLE_CODEBUILD=false
-AWS_BATCH_WORKER_CODEBUILD_PROJECT_NAME=osu-gpt-worker-image-build
-AWS_SAGEMAKER_PROCESSING_IMAGE=...   # optional; defaults to active batch job definition image
-AWS_SAGEMAKER_EXECUTION_ROLE_ARN=... # optional; auto-created role is used if unset
-AWS_SAGEMAKER_INSTANCE_TYPE=ml.g5.xlarge
-AWS_SAGEMAKER_INSTANCE_COUNT=1
-AWS_SAGEMAKER_VOLUME_SIZE_GB=50
-```
+## Measured performance
 
-## API key setup (osu + AWS)
+A 3-minute song, v32, one A5000 on the cluster:
 
-### osu API credentials
+| Setup | Decode | Wall |
+| --- | --- | --- |
+| bf16 + SDPA + CUDA-graph decode | 384 tok/s | **63 s** |
+| fp32 fallback (RTX 2080 Ti) | 159 tok/s | 206 s |
+| bf16 + flash attention, no graph decode | 51 tok/s | 250 s |
 
-Current matching uses osu OAuth search for reliable query behavior.
-The unauthenticated public endpoint currently ignores search query terms in this environment.
-You can either:
+Batching amortizes the model load — three maps in one cluster job take 118 s
+total (~37 s each) rather than three separate ~63 s jobs plus three queue waits.
 
-- set `OSU_CLIENT_ID` + `OSU_CLIENT_SECRET` in `.env`, or
-- save them in-app under `Actions / Results -> Batch match review -> osu API Session` (session cookie).
+Upstream's shipped v32 defaults crash on any bf16-capable GPU: flash attention
+trims the kv cache with a data-dependent slice that CUDA graph capture cannot
+express, and the stock fallback then dies on poisoned RNG state. The pinned fork
+selects SDPA whenever the graph decode is active, which is both correct and
+faster.
 
-1. Sign in to osu and open account settings OAuth section:
-   - https://osu.ppy.sh/home/account/edit#new-oauth-application
-2. Create a new OAuth application.
-3. Copy `Client ID` and `Client Secret`.
-4. Add them to `.env` as `OSU_CLIENT_ID` and `OSU_CLIENT_SECRET`.
+## Audio
 
-### AWS credentials for hosted runtime
+Songs are downloaded once per track and cached under the audio cache folder,
+then checked against the Spotify duration (±10 s) so a wrong search result is
+rejected rather than mapped, and normalized to -14 LUFS so maps don't swing
+between deafening and inaudible.
 
-Hosted jobs require your own AWS Batch + S3 setup and session credentials entered in-app.
+30-second previews come from Deezer (matched by ISRC where available) with
+iTunes as a fallback, and are cached as files — Spotify stopped serving preview
+URLs to new apps in November 2024.
 
-1. Recommended: configure AWS SSO profile once:
-   - `aws configure sso` (or `aws configure`)
-2. If using SSO locally, refresh login:
-   - `aws sso login --profile default` (replace profile if needed)
-3. (Optional) install and run Docker locally to speed up image build; Docker is not required.
-   If Docker is unavailable, one-click setup falls back to AWS CodeBuild.
-4. In the app (default runtime is hosted AWS), fill:
-   - AWS profile (usually `default`)
-   - Region
-   - Batch Queue / Job Definition / S3 fields can be left blank for first-time setup
-   - CloudWatch Log Group (optional)
-   - Keep `Use SageMaker Processing for generation (GPU)` checked to submit hosted jobs to SageMaker.
-     Uncheck it to submit hosted jobs to AWS Batch.
-5. Click `One-click AWS Setup (recommended)` first.
-   - Uses AWS SDK credential chain (env vars, shared profile/SSO cache, or instance role).
-   - Attempts to auto-build and push an AWS worker image to ECR.
-   - Uses local Docker when available, otherwise falls back to AWS CodeBuild automatically.
-   - Attempts to auto-discover queue/job definition/S3 bucket if missing.
-   - If still missing, attempts to provision missing S3 + AWS Batch resources automatically.
-   - One-click setup requires a real worker image and will return an error if image provisioning fails.
-     No placeholder image job definition is created in this flow.
-6. Manual fallback (advanced): fill direct key material and click `Save AWS Session`:
-   - Access Key ID
-   - Secret Access Key
-   - Session Token (optional)
-   - Region / queue / job definition / bucket / prefix
+## Generation settings
 
-Inference GPU note:
+The form asks only for star rating and AR/OD/CS/HP. Everything else — model
+version, mapper id, style year, descriptors, sampling, seed — lives under
+Advanced and is only sent when you set it, so the model's own tuned defaults
+apply otherwise.
 
-- GPU model is determined by your AWS Batch compute environment instance types.
-- Typical instance choices:
-  - `g4dn.xlarge` (NVIDIA T4, closest to common Colab T4 setups for Mapperatorinator).
-  - `g6.xlarge` (L4) for balanced cost/perf.
-  - `g6e.xlarge` (L40S) for higher VRAM/throughput.
-  - `p5` family (H100/H200 variants) for premium throughput.
-- For `g4dn.xlarge`, keep `AWS_BATCH_JOB_MEMORY=12288` (16 GiB often over-requests schedulable memory in Batch).
+Descriptors are generated from `datasets/beatmap_descriptors.csv` in the model
+repo (`npm run gen:descriptors`, run automatically before dev/build). Values
+outside that vocabulary are silently ignored by the model, so the picker only
+offers real ones.
 
-Credentials are stored as an encrypted, HTTP-only session cookie and are not written into `store.json`.
+## Export
 
-## Runtime requirements
-
-Local generation needs:
-
-- `spotdl` installed and available on PATH
-- `python` available on PATH
-- `../Mapperatorinator` present and runnable (this repo does not currently include it as a git submodule)
-
-Hosted generation needs:
-
-- AWS Batch queue + job definition that can run your generation worker
-- S3 bucket access for artifact upload/download
-- AWS credentials with Batch + S3 (+ optional CloudWatch Logs) permissions
-
-The app stores local state in `web/.data/store.json` and generated artifacts in `web/.data/artifacts/`.
-
-## Current v1 scope
-
-- Apple Music is deferred.
-- Hosted runtime supports one-click AWS provisioning for first-time setup (ECR + worker image + Batch + S3).
+Set an export folder in settings — point it at your osu! `Songs` folder — and
+finished `.osz` files are copied there automatically. Leave it empty to download
+from the browser instead.
