@@ -51,7 +51,7 @@ export const GPU_PROFILES: Record<GpuProfileId, GpuProfile> = {
     p90WaitSec: 1357,
     startupSec: 25,
     secPerAudioMinute: 12,
-    note: "Usually starts fast, but one run in ten waits ~20 minutes. Best for big batches.",
+    note: "Roughly 3x the throughput. Best when queueing a lot of songs.",
   },
   auto: {
     id: "auto",

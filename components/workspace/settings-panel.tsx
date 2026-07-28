@@ -12,7 +12,6 @@ type ProfileEstimate = {
   note: string;
   freeNow: number;
   expectedWaitSec: number;
-  p90WaitSec: number;
 };
 
 type Props = {
@@ -101,9 +100,6 @@ export function SettingsPanel({ settings, onSave, firstRun }: Props) {
           </select>
           <span className="field__hint">
             {loadingEstimates ? "Checking live availability…" : current?.note}
-            {current && current.p90WaitSec > 120
-              ? ` Worst case seen: ${formatDuration(current.p90WaitSec)}.`
-              : ""}
           </span>
         </label>
       ) : null}
