@@ -39,15 +39,6 @@ async function drain() {
   }
 }
 
-/** Re-attach to jobs left mid-flight by a server restart. */
-export function reconcileOnBoot() {
-  const store = readStore();
-  const orphaned = store.jobs.filter(
-    (job) => (job.status === "queued" || job.status === "running") && !job.dcc?.slurmJobId,
-  );
-  if (orphaned.length > 0) enqueueJobs(orphaned);
-}
-
 export function queueDepth() {
   return pending.length;
 }

@@ -15,6 +15,8 @@ export type GenerationRuntime = {
   /** Drive one or more jobs to a terminal state. */
   run(contexts: JobContext[]): Promise<void>;
   cancel?(job: GenerationJob): Promise<void>;
+  /** Re-attach to work that is still running elsewhere after a restart. */
+  resume?(job: GenerationJob, context: JobContext): Promise<void>;
   /** How many jobs this runtime prefers to receive at once. */
   batchSize: number;
 };

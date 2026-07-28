@@ -5,7 +5,7 @@ import { buildGeneratorParams } from "../generatorConfig";
 
 import { collectArtifacts, setJobState } from "../jobs";
 import { readStore } from "../store";
-import { GenerationJob } from "../types";
+import { DccJobMeta, GenerationJob } from "../types";
 import { rsyncDown, rsyncUp, ssh, sshReachable, shq } from "./ssh";
 import { GenerationRuntime, JobContext } from "./types";
 
@@ -113,8 +113,12 @@ async function readResults(host: string, remoteDir: string): Promise<ResultRecor
 }
 
 /** Mirror the remote slurm log into each job's local log, tracking byte offsets. */
-async function streamLogs(host: string, remoteDir: string, contexts: JobContext[]) {
-  const offset = contexts[0]?.job.dcc?.logOffset ?? 0;
+async function streamLogs(
+  host: string,
+  remoteDir: string,
+  offset: number,
+  contexts: JobContext[],
+) {
   const output = await ssh(
     host,
     `tail -c +${offset + 1} ${shq(`${remoteDir}/slurm.log`)} 2>/dev/null || true`,
@@ -212,7 +216,14 @@ export const dccRuntime: GenerationRuntime = {
       setJobState(ctx.job.id, { status: "queued", dcc: meta });
     }
 
-    await pollUntilDone(host, slurmJobId, remoteDir, contexts);
+    await pollUntilDone(host, remoteDir, contexts, meta);
+  },
+
+  /** Re-attach to a Slurm job that outlived the server process. */
+  async resume(job: GenerationJob, context: JobContext) {
+    if (!job.dcc?.slurmJobId) return;
+    context.appendLog(`Reattaching to Slurm job ${job.dcc.slurmJobId} after a restart.`);
+    await pollUntilDone(loadPin().dcc.sshHost, job.dcc.remoteDir, [context], { ...job.dcc });
   },
 
   async cancel(job: GenerationJob) {
@@ -227,13 +238,14 @@ const TERMINAL = /^(COMPLETED|FAILED|TIMEOUT|CANCELLED|OUT_OF_MEMORY|NODE_FAIL|D
 
 async function pollUntilDone(
   host: string,
-  slurmJobId: string,
   remoteDir: string,
   contexts: JobContext[],
+  meta: DccJobMeta,
 ) {
+  // Track live state here: JobContext holds a snapshot taken before submit, so
+  // reading job.dcc back off it would lose the Slurm id and reset the log offset.
+  const slurmJobId = meta.slurmJobId;
   let started = false;
-  let requeueCount = 0;
-  let logOffset = 0;
 
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, 10_000));
@@ -241,23 +253,29 @@ async function pollUntilDone(
     const raw = (
       await ssh(host, `sacct -X -n -P -o State,Reason -j ${shq(slurmJobId)}`)
     ).trim();
-    const [state = "", reason = ""] = raw.split("\n")[0]?.split("|") ?? [];
+    const [state = "", rawReason = ""] = raw.split("\n")[0]?.split("|") ?? [];
+    // sacct reports a literal "None" when there is nothing to explain.
+    const reason = rawReason === "None" ? "" : rawReason;
 
-    logOffset = await streamLogs(host, remoteDir, contexts).catch(() => logOffset);
+    meta.logOffset = await streamLogs(host, remoteDir, meta.logOffset, contexts).catch(
+      () => meta.logOffset,
+    );
+    meta.statusReason = reason;
+    meta.lastPolledAt = new Date().toISOString();
 
     if (state.startsWith("PENDING") || state.startsWith("REQUEUED") || state.startsWith("SUSPENDED")) {
       for (const ctx of contexts) {
-        setJobState(ctx.job.id, { status: "queued", dcc: { ...ctx.job.dcc!, statusReason: reason, logOffset } });
+        setJobState(ctx.job.id, { status: "queued", dcc: { ...meta } });
       }
       continue;
     }
 
     if (state.startsWith("PREEMPTED")) {
-      requeueCount += 1;
+      meta.requeueCount += 1;
       contexts.forEach((ctx) =>
-        ctx.appendLog(`Preempted on ${ctx.job.dcc?.partition} — requeued (${requeueCount}/3).`),
+        ctx.appendLog(`Preempted on ${meta.partition} — requeued (${meta.requeueCount}/3).`),
       );
-      if (requeueCount >= 3) {
+      if (meta.requeueCount >= 3) {
         await ssh(host, `scancel ${shq(slurmJobId)}`).catch(() => {});
         failAll(contexts, "Preempted three times; give up and retry on gpu-common.");
         return;
@@ -269,7 +287,11 @@ async function pollUntilDone(
       if (!started) {
         started = true;
         for (const ctx of contexts) {
-          setJobState(ctx.job.id, { status: "running", startedAt: new Date().toISOString() });
+          setJobState(ctx.job.id, {
+            status: "running",
+            startedAt: new Date().toISOString(),
+            dcc: { ...meta },
+          });
         }
       }
       continue;

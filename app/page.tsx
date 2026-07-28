@@ -17,6 +17,7 @@ import type {
   ModelVersion,
   SpotifyImportStatus,
   Track,
+  TrackMatchSnapshot,
 } from "@/lib/types";
 
 type SessionResponse = {
@@ -36,6 +37,8 @@ export default function Home() {
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [tracksTotal, setTracksTotal] = useState(0);
+  const [libraryTotal, setLibraryTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [tracksLoading, setTracksLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -47,6 +50,8 @@ export default function Home() {
   const lastClickedRef = useRef<string | null>(null);
 
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
+  const [matches, setMatches] = useState<Record<string, TrackMatchSnapshot>>({});
+  const [matching, setMatching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [importStatus, setImportStatus] = useState<SpotifyImportStatus>({ status: "idle" });
 
@@ -95,9 +100,18 @@ export default function Home() {
       });
       if (debouncedQuery) params.set("q", debouncedQuery);
       const response = await fetch(`/api/library/tracks?${params}`);
-      const data = (await response.json()) as { tracks: Track[]; total: number };
+      const data = (await response.json()) as {
+        tracks: Track[];
+        totalTracks: number;
+        pagination: { total: number; totalPages: number };
+        matchesByTrackId?: Record<string, TrackMatchSnapshot>;
+      };
       setTracks(data.tracks ?? []);
-      setTracksTotal(data.total ?? 0);
+      // pagination.total reflects the active filters; totalTracks is the library size.
+      setTracksTotal(data.pagination?.total ?? 0);
+      setLibraryTotal(data.totalTracks ?? 0);
+      setTotalPages(data.pagination?.totalPages ?? 1);
+      if (data.matchesByTrackId) setMatches(data.matchesByTrackId);
     } catch {
       toast.error("Could not load your library.");
     } finally {
@@ -229,6 +243,35 @@ export default function Home() {
     [selectedTrackIds, loadJobs],
   );
 
+  const checkExistingMaps = useCallback(async () => {
+    if (selectedTrackIds.size === 0) return;
+    setMatching(true);
+    try {
+      const response = await fetch("/api/osu/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [...selectedTrackIds] }),
+      });
+      const data = (await response.json()) as {
+        summary?: { total: number; matchedCount: number; errorCount: number };
+        error?: string;
+      };
+      if (!response.ok) {
+        toast.error(data.error ?? "Existing-map lookup failed.");
+        return;
+      }
+      const summary = data.summary;
+      toast.success(
+        summary
+          ? `${summary.matchedCount} of ${summary.total} already have a Ranked or Loved map.`
+          : "Lookup finished.",
+      );
+      void loadTracks();
+    } finally {
+      setMatching(false);
+    }
+  }, [selectedTrackIds, loadTracks]);
+
   const syncLibrary = useCallback(async () => {
     setBusy(true);
     try {
@@ -244,9 +287,10 @@ export default function Home() {
     if (importStatus.status !== "running") return;
     const timer = setInterval(async () => {
       const response = await fetch("/api/library/spotify/import-status");
-      const data = (await response.json()) as { importStatus: SpotifyImportStatus };
-      setImportStatus(data.importStatus);
-      if (data.importStatus.status !== "running") void loadTracks();
+      const data = (await response.json()) as { status: SpotifyImportStatus };
+      if (!data.status) return;
+      setImportStatus(data.status);
+      if (data.status.status !== "running") void loadTracks();
     }, 2000);
     return () => clearInterval(timer);
   }, [importStatus.status, loadTracks]);
@@ -254,8 +298,6 @@ export default function Home() {
   if (!spotifyConnected) {
     return <AuthShell bootstrapping={bootstrapping} />;
   }
-
-  const totalPages = Math.max(1, Math.ceil(tracksTotal / pageSize));
 
   return (
     <div className="app">
@@ -268,9 +310,20 @@ export default function Home() {
       <header className="app__header">
         <h1 className="app__title">osu-gpt</h1>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          <span className="muted">{tracksTotal} tracks</span>
+          <span className="muted">
+            {tracksTotal === libraryTotal
+              ? `${libraryTotal} tracks`
+              : `${tracksTotal} of ${libraryTotal} tracks`}
+          </span>
           <Button variant="ghost" onClick={syncLibrary} disabled={busy}>
             Sync liked songs
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={checkExistingMaps}
+            disabled={matching || selectedTrackIds.size === 0}
+          >
+            {matching ? "Checking..." : "Check existing maps"}
           </Button>
           <Button variant="ghost" onClick={() => setShowSettings((value) => !value)}>
             Settings
@@ -361,6 +414,7 @@ export default function Home() {
           </div>
           <LibraryPane
             tracks={tracks}
+            matches={matches}
             loading={tracksLoading}
             selectedTrackIds={selectedTrackIds}
             completedTrackIds={completedTrackIds}
