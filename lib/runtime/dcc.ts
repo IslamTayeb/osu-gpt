@@ -9,25 +9,51 @@ import { DccJobMeta, GenerationJob } from "../types";
 import { rsyncDown, rsyncUp, ssh, sshReachable, shq } from "./ssh";
 import { GenerationRuntime, JobContext } from "./types";
 
+/** Above this many pending jobs, a partition's "free" GPU is likely already claimed. */
+const QUEUE_CONGESTED = 25;
+
 async function pickTarget(host: string, log: (line: string) => void) {
   try {
     const output = await ssh(
       host,
-      "gpuavail -m -p gpu-common 2>/dev/null; echo ::SPLIT::; gpuavail -m -p scavenger-gpu 2>/dev/null",
+      "gpuavail -m -p gpu-common 2>/dev/null; echo ::SPLIT::; gpuavail -m -p scavenger-gpu 2>/dev/null; " +
+        "echo ::SPLIT::; squeue -p gpu-common --states=PD -h | wc -l; " +
+        "squeue -p scavenger-gpu --states=PD -h | wc -l",
       { timeoutMs: 30_000 },
     );
-    const [common, scavenger] = output.split("::SPLIT::");
+    const [common, scavenger, queues] = output.split("::SPLIT::");
     const byPartition: Record<string, Map<string, number>> = {
       "gpu-common": parseGpuAvail(common ?? ""),
       "scavenger-gpu": parseGpuAvail(scavenger ?? ""),
     };
-    for (const candidate of GPU_PREFERENCE) {
-      if ((byPartition[candidate.partition]?.get(candidate.gres) ?? 0) > 0) {
-        log(`Free GPU found: ${candidate.gres} on ${candidate.partition}.`);
-        return candidate;
-      }
+    const [commonPending = 0, scavengerPending = 0] = (queues ?? "")
+      .split("\n")
+      .map((line) => Number(line.trim()))
+      .filter((value) => Number.isFinite(value));
+    const pending: Record<string, number> = {
+      "gpu-common": commonPending,
+      "scavenger-gpu": scavengerPending,
+    };
+
+    // gpuavail is a snapshot and races with everyone else's submissions, so a
+    // "free" GPU on a partition with a deep backlog often means queueing behind
+    // it. Prefer an uncongested partition first, then accept any free GPU.
+    const free = (candidate: { partition: string; gres: string }) =>
+      (byPartition[candidate.partition]?.get(candidate.gres) ?? 0) > 0;
+    const chosen =
+      GPU_PREFERENCE.find((c) => free(c) && pending[c.partition] <= QUEUE_CONGESTED) ??
+      GPU_PREFERENCE.find(free);
+
+    if (chosen) {
+      log(
+        `Free GPU found: ${chosen.gres} on ${chosen.partition} ` +
+          `(${pending[chosen.partition]} jobs already queued there).`,
+      );
+      return chosen;
     }
-    log("No free GPUs right now — queueing on gpu-common 2080.");
+    log(
+      `No free GPUs right now — queueing on gpu-common 2080 behind ${commonPending} jobs.`,
+    );
   } catch (error) {
     log(
       `Could not read GPU availability (${error instanceof Error ? error.message : error}); ` +
