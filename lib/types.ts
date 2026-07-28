@@ -1,83 +1,42 @@
-export type RuntimeType = "local" | "hosted_aws";
-export type MusicProvider = "spotify" | "apple";
+export type RuntimeType = "local" | "dcc";
+export type MusicProvider = "spotify";
 
+/** Config name passed to Mapperatorinator as `-cn <name>`. */
+export type ModelVersion = "v32" | "v32-mini" | "v31" | "v30";
+
+/**
+ * Only the parameters osu-gpt actually controls. Anything left null is omitted
+ * from the Hydra overrides so the model's own inference config wins — v32 ships
+ * tuned sampling plus bf16 and the fast decoder loop, and sending defaults for
+ * every key (as this once did) silently clobbered all of it.
+ */
 export type GeneratorParams = {
-  gamemode?: number | null;
-  beatmapId?: number | null;
+  // Always sent.
   difficulty?: number | null;
-  mapperId?: number | null;
-  year?: number | null;
-  hitsounded?: boolean | null;
-  keycount?: number | null;
-  holdNoteRatio?: number | null;
-  scrollSpeedRatio?: number | null;
-  descriptors?: string[] | null;
-  negativeDescriptors?: string[] | null;
   hpDrainRate?: number | null;
   circleSize?: number | null;
   overallDifficulty?: number | null;
   approachRate?: number | null;
-  sliderMultiplier?: number | null;
-  sliderTickRate?: number | null;
-  seed?: number | null;
-  device?: string | null;
-  precision?: string | null;
-  attnImplementation?: string | null;
-  addToBeatmap?: boolean | null;
-  overwriteReferenceBeatmap?: boolean | null;
-  exportOsz?: boolean | null;
-  startTime?: number | null;
-  endTime?: number | null;
-  lookback?: number | null;
-  lookahead?: number | null;
-  timingLeniency?: number | null;
-  inContext?: string[] | null;
-  outputType?: string[] | null;
+  // Advanced; sent only when set.
+  mapperId?: number | null;
+  year?: number | null;
+  hitsounded?: boolean | null;
+  descriptors?: string[] | null;
+  negativeDescriptors?: string[] | null;
   cfgScale?: number | null;
   temperature?: number | null;
-  timingTemperature?: number | null;
-  maniaColumnTemperature?: number | null;
-  taikoHitTemperature?: number | null;
-  timeshiftBias?: number | null;
   topP?: number | null;
-  topK?: number | null;
-  parallel?: boolean | null;
-  doSample?: boolean | null;
-  numBeams?: number | null;
+  seed?: number | null;
   superTiming?: boolean | null;
-  timerNumBeams?: number | null;
-  timerBpmThreshold?: number | null;
-  timerCfgScale?: number | null;
-  timerIterations?: number | null;
-  useServer?: boolean | null;
-  maxBatchSize?: number | null;
-  resnapEvents?: boolean | null;
-  bpm?: number | null;
-  offset?: number | null;
+  startTime?: number | null;
+  endTime?: number | null;
+  // Beatmap metadata, derived from the track.
   title?: string | null;
   titleUnicode?: string | null;
   artist?: string | null;
   artistUnicode?: string | null;
   creator?: string | null;
   version?: string | null;
-  source?: string | null;
-  tags?: string | null;
-  background?: string | null;
-  previewTime?: number | null;
-  generatePositions?: boolean | null;
-  diffCfgScale?: number | null;
-  compile?: boolean | null;
-  padSequence?: boolean | null;
-  diffCkpt?: string | null;
-  diffRefineCkpt?: string | null;
-  beatmapIdx?: string | null;
-  refineIters?: number | null;
-  randomInit?: boolean | null;
-  timesteps?: number[] | null;
-  maxSeqLen?: number | null;
-  overlapBuffer?: number | null;
-  loraPath?: string | null;
-  beatmapPath?: string | null;
 };
 
 export type Track = {
@@ -90,6 +49,7 @@ export type Track = {
   durationMs: number;
   artworkUrl: string;
   externalUrl: string;
+  isrc?: string;
   source: "liked" | "playlist" | "library";
   sourceLabel: string;
   importedAt: string;
@@ -113,44 +73,40 @@ export type Artifact = {
   id: string;
   jobId: string;
   fileName: string;
-  storage: "local" | "s3";
+  storage: "local";
   relativePath?: string;
-  s3Bucket?: string;
-  s3Key?: string;
   sizeBytes: number;
   expiresAt: string;
   createdAt: string;
 };
 
-export type HostedAwsJobMeta = {
-  provider: "aws_batch";
-  batchJobId?: string;
-  region: string;
-  queue: string;
-  jobDefinition: string;
-  bucket: string;
-  prefix: string;
-  logGroup?: string;
-  logStream?: string;
+export type DccJobMeta = {
+  slurmJobId: string;
+  partition: string;
+  gres: string;
+  remoteDir: string;
+  node?: string;
   statusReason?: string;
+  requeueCount: number;
+  /** Bytes of the remote slurm log already mirrored locally. */
+  logOffset: number;
   submittedAt?: string;
-  lastSyncedAt?: string;
+  lastPolledAt?: string;
 };
 
 export type GenerationJob = {
   id: string;
   trackId: string;
   runtime: RuntimeType;
-  preset: "quick" | "balanced" | "high_quality";
+  modelVersion: ModelVersion;
   generatorParams: GeneratorParams;
-  budgetCapUsd: number;
+  experimentalCompile?: boolean;
   timeoutSec: number;
   status: "queued" | "running" | "completed" | "failed";
   warning?: string;
   error?: string;
-  logs: string[];
   artifacts: Artifact[];
-  hosted?: HostedAwsJobMeta;
+  dcc?: DccJobMeta;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -176,11 +132,27 @@ export type TrackMatchSnapshot = {
   error?: string;
 };
 
+export type AppSettings = {
+  runtime: RuntimeType;
+  /** Where downloaded + normalized full songs are cached. */
+  audioCacheDir: string;
+  /** Generated .osz files are copied here when set (e.g. the osu! Songs folder). */
+  exportDir?: string | null;
+  loudnormEnabled: boolean;
+  loudnormTargetLufs: number;
+  prefetchPreviews: boolean;
+  maxConcurrentJobs: number;
+  modelVersion: ModelVersion;
+  experimentalCompile: boolean;
+  /** Last-used advanced generation params, restored on load. */
+  generationDefaults?: GeneratorParams;
+  setupCompletedAt?: string;
+  spotdlAcknowledgedAt?: string;
+  spotifyImport?: SpotifyImportStatus;
+};
+
 export type AppStore = {
-  settings: {
-    spotdlAcknowledgedAt?: string;
-    spotifyImport?: SpotifyImportStatus;
-  };
+  settings: AppSettings;
   tracks: Track[];
   jobs: GenerationJob[];
   matchesByTrackId: Record<string, TrackMatchSnapshot>;

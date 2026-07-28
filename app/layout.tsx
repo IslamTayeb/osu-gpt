@@ -1,26 +1,16 @@
 import type { Metadata } from "next";
-import { Bodoni_Moda, Geist, Geist_Mono } from "next/font/google";
+import { Open_Sans } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-const bodoniDisplay = Bodoni_Moda({
-  variable: "--font-display",
+const openSans = Open_Sans({
+  variable: "--font-open-sans",
   subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
   title: "osu-gpt",
-  description: "Spotify to osu workflow: import, match Ranked/Loved, generate unmatched, export ZIP",
+  description: "Turn your Spotify library into osu! beatmaps.",
 };
 
 export default function RootLayout({
@@ -30,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} ${bodoniDisplay.variable}`}>
+      <body className={openSans.variable}>
         {children}
         <Toaster />
       </body>

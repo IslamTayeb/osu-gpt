@@ -1,0 +1,15 @@
+{
+  "repo": "https://github.com/IslamTayeb/Mapperatorinator.git",
+  "branch": "osu-gpt/batch-driver",
+  "sha": "d43d8ea7",
+  "upstreamBase": "2a70eb89",
+  "notes": "Branch is clean upstream main plus the osu-gpt batch driver and the CUDA-graph capture fixes. Rebase onto upstream main to pick up new releases.",
+  "dcc": {
+    "sshHost": "dcc",
+    "account": "GROUP",
+    "repo": "/hpc/group/GROUP/NETID/projects/Mapperatorinator",
+    "env": "/hpc/group/GROUP/NETID/envs/mapperatorinator",
+    "hfHome": "/work/NETID/Mapperatorinator/cache/huggingface",
+    "workDir": "/work/NETID/osu-gpt"
+  }
+}

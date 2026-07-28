@@ -1,12 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
-import { AppStore } from "./types";
+import os from "node:os";
+import { AppSettings, AppStore } from "./types";
 
 const dataDir = path.join(process.cwd(), ".data");
 const dbPath = path.join(dataDir, "store.json");
 
+export const defaultSettings: AppSettings = {
+  runtime: "dcc",
+  audioCacheDir: path.join(dataDir, "cache"),
+  exportDir: null,
+  loudnormEnabled: true,
+  loudnormTargetLufs: -14,
+  prefetchPreviews: false,
+  maxConcurrentJobs: 4,
+  modelVersion: "v32",
+  experimentalCompile: false,
+};
+
 const defaultStore: AppStore = {
-  settings: {},
+  settings: defaultSettings,
   tracks: [],
   jobs: [],
   matchesByTrackId: {},
@@ -17,16 +30,15 @@ function ensureStoreFile() {
     fs.mkdirSync(dataDir, { recursive: true });
   }
   if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify(defaultStore, null, 2), "utf8");
+    writeStore(defaultStore);
   }
 }
 
 export function readStore(): AppStore {
   ensureStoreFile();
-  const content = fs.readFileSync(dbPath, "utf8");
-  const parsed = JSON.parse(content) as Partial<AppStore>;
+  const parsed = JSON.parse(fs.readFileSync(dbPath, "utf8")) as Partial<AppStore>;
   return {
-    settings: parsed.settings ?? {},
+    settings: { ...defaultSettings, ...(parsed.settings ?? {}) },
     tracks: parsed.tracks ?? [],
     jobs: parsed.jobs ?? [],
     matchesByTrackId: parsed.matchesByTrackId ?? {},
@@ -34,13 +46,56 @@ export function readStore(): AppStore {
 }
 
 export function writeStore(next: AppStore) {
-  ensureStoreFile();
-  fs.writeFileSync(dbPath, JSON.stringify(next, null, 2), "utf8");
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  // Write-then-rename so a crash mid-write can't truncate the store. The temp
+  // file must share a filesystem with the target for rename to be atomic.
+  const tmpPath = path.join(dataDir, `.store.${process.pid}.${Date.now()}.tmp`);
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(next, null, 2), "utf8");
+    fs.renameSync(tmpPath, dbPath);
+  } catch (error) {
+    fs.rmSync(tmpPath, { force: true });
+    throw error;
+  }
 }
 
+/**
+ * Read-modify-write under a lock directory, so concurrent jobs in this process
+ * (and any stray second process) can't lose each other's updates.
+ */
 export function updateStore(updater: (store: AppStore) => void): AppStore {
-  const store = readStore();
-  updater(store);
-  writeStore(store);
-  return store;
+  const lockPath = path.join(dataDir, ".store.lock");
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      fs.mkdirSync(lockPath);
+      break;
+    } catch {
+      if (Date.now() > deadline) {
+        // Assume a crashed holder rather than deadlocking forever.
+        fs.rmSync(lockPath, { recursive: true, force: true });
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
+    }
+  }
+  try {
+    const store = readStore();
+    updater(store);
+    writeStore(store);
+    return store;
+  } finally {
+    fs.rmSync(lockPath, { recursive: true, force: true });
+  }
+}
+
+export function resolveAudioCacheDir(): string {
+  const configured = readStore().settings.audioCacheDir || defaultSettings.audioCacheDir;
+  return configured.startsWith("~")
+    ? path.join(os.homedir(), configured.slice(1))
+    : path.resolve(configured);
 }

@@ -4,8 +4,6 @@ import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
 import { MatchResult, Track } from "@/lib/types";
 import { readStore } from "@/lib/store";
-import { getAwsRuntimeSessionFromRequest } from "@/lib/awsSession";
-import { downloadS3Artifact } from "@/lib/awsRuntime";
 
 export const runtime = "nodejs";
 
@@ -120,7 +118,6 @@ function createManifestRow(
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as ExportRequest;
   const trackIds = normalizeTrackIds(body);
-  const awsSession = getAwsRuntimeSessionFromRequest(request);
 
   if (trackIds.length === 0) {
     return NextResponse.json({ error: "trackIds[] is required" }, { status: 400 });
@@ -155,18 +152,7 @@ export async function POST(request: NextRequest) {
         const folder = sanitizePath(`${track.artists.join("_")}_${track.title}_${track.id.slice(0, 8)}`);
         const targetName = `generated/${folder}/${job.id.slice(0, 8)}_${sanitizePath(artifact.fileName)}`;
 
-        if (artifact.storage === "s3") {
-          if (!awsSession || !artifact.s3Bucket || !artifact.s3Key) {
-            continue;
-          }
-          try {
-            const fetched = await downloadS3Artifact(awsSession, artifact.s3Bucket, artifact.s3Key);
-            zip.file(targetName, fetched.content);
-            addedFiles.push(targetName);
-          } catch {
-            continue;
-          }
-        } else {
+        {
           if (!artifact.relativePath) {
             continue;
           }

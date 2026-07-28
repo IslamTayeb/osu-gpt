@@ -6,7 +6,7 @@ Simple v1 implementation of:
 - osu! map lookup (Ranked/Loved, title+artist substring match)
 - Match-first flow with auto-generate fallback
 - spotdl default downloader (with one-time acknowledgment)
-- Mapperatorinator generation jobs (local + hosted AWS Batch)
+- Mapperatorinator generation jobs (local + hosted AWS Batch or SageMaker Processing)
 - Artifact download with 7-day expiration metadata
 
 ## Quick setup (recommended)
@@ -65,12 +65,17 @@ AWS_BATCH_JOB_IMAGE=...          # optional override; if unset, one-click setup 
 AWS_BATCH_INSTANCE_TYPE=g4dn.xlarge
 AWS_BATCH_MAX_VCPUS=16
 AWS_BATCH_JOB_VCPU=4
-AWS_BATCH_JOB_MEMORY=16384
+AWS_BATCH_JOB_MEMORY=12288
 AWS_BATCH_JOB_GPU=1
 AWS_BATCH_WORKER_ECR_REPOSITORY=osu-gpt-worker
 AWS_BATCH_WORKER_IMAGE_TAG=latest
 AWS_BATCH_WORKER_DISABLE_CODEBUILD=false
 AWS_BATCH_WORKER_CODEBUILD_PROJECT_NAME=osu-gpt-worker-image-build
+AWS_SAGEMAKER_PROCESSING_IMAGE=...   # optional; defaults to active batch job definition image
+AWS_SAGEMAKER_EXECUTION_ROLE_ARN=... # optional; auto-created role is used if unset
+AWS_SAGEMAKER_INSTANCE_TYPE=ml.g5.xlarge
+AWS_SAGEMAKER_INSTANCE_COUNT=1
+AWS_SAGEMAKER_VOLUME_SIZE_GB=50
 ```
 
 ## API key setup (osu + AWS)
@@ -98,20 +103,23 @@ Hosted jobs require your own AWS Batch + S3 setup and session credentials entere
    - `aws configure sso` (or `aws configure`)
 2. If using SSO locally, refresh login:
    - `aws sso login --profile default` (replace profile if needed)
-3. (Optional) install and run Docker locally to speed up image build; if Docker is unavailable, one-click setup
-   falls back to AWS CodeBuild.
+3. (Optional) install and run Docker locally to speed up image build; Docker is not required.
+   If Docker is unavailable, one-click setup falls back to AWS CodeBuild.
 4. In the app (default runtime is hosted AWS), fill:
    - AWS profile (usually `default`)
    - Region
    - Batch Queue / Job Definition / S3 fields can be left blank for first-time setup
    - CloudWatch Log Group (optional)
+   - Keep `Use SageMaker Processing for generation (GPU)` checked to submit hosted jobs to SageMaker.
+     Uncheck it to submit hosted jobs to AWS Batch.
 5. Click `One-click AWS Setup (recommended)` first.
    - Uses AWS SDK credential chain (env vars, shared profile/SSO cache, or instance role).
    - Attempts to auto-build and push an AWS worker image to ECR.
    - Uses local Docker when available, otherwise falls back to AWS CodeBuild automatically.
    - Attempts to auto-discover queue/job definition/S3 bucket if missing.
    - If still missing, attempts to provision missing S3 + AWS Batch resources automatically.
-   - If image build still fails, set `AWS_BATCH_JOB_IMAGE` manually.
+   - One-click setup requires a real worker image and will return an error if image provisioning fails.
+     No placeholder image job definition is created in this flow.
 6. Manual fallback (advanced): fill direct key material and click `Save AWS Session`:
    - Access Key ID
    - Secret Access Key
@@ -122,9 +130,11 @@ Inference GPU note:
 
 - GPU model is determined by your AWS Batch compute environment instance types.
 - Typical instance choices:
+  - `g4dn.xlarge` (NVIDIA T4, closest to common Colab T4 setups for Mapperatorinator).
   - `g6.xlarge` (L4) for balanced cost/perf.
   - `g6e.xlarge` (L40S) for higher VRAM/throughput.
   - `p5` family (H100/H200 variants) for premium throughput.
+- For `g4dn.xlarge`, keep `AWS_BATCH_JOB_MEMORY=12288` (16 GiB often over-requests schedulable memory in Batch).
 
 Credentials are stored as an encrypted, HTTP-only session cookie and are not written into `store.json`.
 
@@ -147,4 +157,4 @@ The app stores local state in `web/.data/store.json` and generated artifacts in 
 ## Current v1 scope
 
 - Apple Music is deferred.
-- Hosted runtime assumes you already provisioned AWS infrastructure (the app does not provision it automatically).
+- Hosted runtime supports one-click AWS provisioning for first-time setup (ECR + worker image + Batch + S3).

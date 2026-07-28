@@ -1,26 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createGenerationJob } from "@/lib/jobs";
-import { readStore } from "@/lib/store";
-import {
-  getAwsRuntimeSessionFromRequest,
-  isAwsRuntimeSessionConfigured,
-  missingAwsRuntimeSessionFields,
-} from "@/lib/awsSession";
-import { syncHostedAwsJobs } from "@/lib/awsRuntime";
-import { sanitizeGeneratorParams, validateGeneratorParams } from "@/lib/generatorConfig";
+import { enqueueJobs } from "@/lib/runtime/queue";
+import { readStore, updateStore } from "@/lib/store";
+import { validateParams } from "@/lib/generatorConfig";
+import { GeneratorParams, ModelVersion, RuntimeType } from "@/lib/types";
 
 export const runtime = "nodejs";
 
-export async function GET(request: NextRequest) {
-  const awsSession = getAwsRuntimeSessionFromRequest(request);
-  if (awsSession && isAwsRuntimeSessionConfigured(awsSession)) {
-    try {
-      await syncHostedAwsJobs(awsSession);
-    } catch {
-      // Keep GET resilient when AWS is misconfigured/temporarily unavailable.
-    }
-  }
-  const jobs = readStore().jobs;
+const MAX_LISTED_JOBS = 100;
+const MIN_TIMEOUT_SEC = 300;
+const MAX_TIMEOUT_SEC = 2700;
+
+export async function GET() {
+  const jobs = readStore().jobs.slice(0, MAX_LISTED_JOBS);
   return NextResponse.json({ jobs });
 }
 
@@ -28,83 +20,86 @@ export async function POST(request: NextRequest) {
   const body = (await request.json()) as {
     trackId?: string;
     trackIds?: string[];
-    runtime?: "local" | "hosted_aws";
-    preset?: "quick" | "balanced" | "high_quality";
-    budgetCapUsd?: number;
+    allTracks?: boolean;
+    runtime?: RuntimeType;
+    modelVersion?: ModelVersion;
+    experimentalCompile?: boolean;
     timeoutSec?: number;
-    generatorParams?: unknown;
+    generatorParams?: GeneratorParams;
   };
 
-  const trackIds = Array.from(
-    new Set(
-      (Array.isArray(body.trackIds) ? body.trackIds : body.trackId ? [body.trackId] : [])
-        .map((id) => id.trim())
-        .filter(Boolean),
-    ),
-  );
+  const store = readStore();
+  const trackIds = body.allTracks
+    ? store.tracks.map((track) => track.id)
+    : Array.from(
+        new Set(
+          (Array.isArray(body.trackIds) ? body.trackIds : body.trackId ? [body.trackId] : [])
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      );
 
   if (trackIds.length === 0) {
-    return NextResponse.json({ error: "trackId or trackIds[] is required" }, { status: 400 });
+    return NextResponse.json({ error: "Select at least one track." }, { status: 400 });
   }
 
-  const tracks = readStore().tracks;
-  const trackIdSet = new Set(tracks.map((track) => track.id));
-  const missing = trackIds.filter((id) => !trackIdSet.has(id));
+  const known = new Map(store.tracks.map((track) => [track.id, track]));
+  const missing = trackIds.filter((id) => !known.has(id));
   if (missing.length > 0) {
-    return NextResponse.json({ error: `Track(s) not found: ${missing.join(", ")}` }, { status: 404 });
+    return NextResponse.json(
+      { error: `Track(s) not found: ${missing.slice(0, 5).join(", ")}` },
+      { status: 404 },
+    );
   }
 
-  const runtime = body.runtime ?? "local";
-  const preset = body.preset ?? "balanced";
-  const budgetCapUsd = Number.isFinite(body.budgetCapUsd) ? Number(body.budgetCapUsd) : 50;
+  if (!store.settings.spotdlAcknowledgedAt) {
+    return NextResponse.json(
+      { error: "Acknowledge the audio download notice before generating." },
+      { status: 400 },
+    );
+  }
+
+  const generatorParams = body.generatorParams ?? {};
+  const errors = validateParams(generatorParams);
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(" "), details: errors }, { status: 400 });
+  }
+
+  const runtimeId: RuntimeType = body.runtime ?? store.settings.runtime;
+  const modelVersion: ModelVersion = body.modelVersion ?? store.settings.modelVersion;
   const timeoutSec = Math.min(
-    600,
-    Math.max(300, Number.isFinite(body.timeoutSec) ? Number(body.timeoutSec) : 600),
+    MAX_TIMEOUT_SEC,
+    Math.max(MIN_TIMEOUT_SEC, Number(body.timeoutSec) || 1200),
   );
-  const validationErrors = validateGeneratorParams(body.generatorParams);
-  if (validationErrors.length > 0) {
-    return NextResponse.json(
-      {
-        error: "Invalid generator params.",
-        details: validationErrors,
-      },
-      { status: 400 },
-    );
-  }
-  const generatorParams = sanitizeGeneratorParams(body.generatorParams);
-  const awsSession = runtime === "hosted_aws" ? getAwsRuntimeSessionFromRequest(request) : null;
-
-  if (runtime === "hosted_aws" && !awsSession) {
-    return NextResponse.json(
-      { error: "Hosted AWS runtime is selected but no AWS session is configured." },
-      { status: 400 },
-    );
-  }
-  if (runtime === "hosted_aws" && !isAwsRuntimeSessionConfigured(awsSession)) {
-    return NextResponse.json(
-      {
-        error: "Hosted AWS runtime is incomplete. Fill missing AWS fields before queuing hosted jobs.",
-        details: missingAwsRuntimeSessionFields(awsSession).map((field) => `missing AWS field: ${field}`),
-      },
-      { status: 400 },
-    );
-  }
 
   const jobs = trackIds.map((trackId) =>
     createGenerationJob({
-      trackId,
-      runtime,
-      preset,
-      budgetCapUsd,
-      timeoutSec,
+      track: known.get(trackId)!,
       generatorParams,
-      awsSession,
+      modelVersion,
+      runtime: runtimeId,
+      timeoutSec,
+      experimentalCompile: body.experimentalCompile ?? store.settings.experimentalCompile,
     }),
   );
 
-  if (body.trackId && !Array.isArray(body.trackIds) && jobs.length === 1) {
-    return NextResponse.json({ job: jobs[0] }, { status: 201 });
-  }
+  // Remember what was used so the form comes back the same way next time.
+  updateStore((next) => {
+    next.settings.generationDefaults = generatorParams;
+    next.settings.runtime = runtimeId;
+    next.settings.modelVersion = modelVersion;
+  });
 
+  enqueueJobs(jobs);
   return NextResponse.json({ jobs }, { status: 201 });
+}
+
+/** Clear finished history; in-flight jobs are left alone. */
+export async function DELETE() {
+  updateStore((store) => {
+    store.jobs = store.jobs.filter(
+      (job) => job.status === "queued" || job.status === "running",
+    );
+  });
+  return NextResponse.json({ ok: true });
 }

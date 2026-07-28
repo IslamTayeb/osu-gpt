@@ -1,21 +1,5 @@
 import type { MatchResult, SpotifyImportStatus, Track, TrackMatchSnapshot } from "./types";
 
-export type HostedAwsSessionStatus = {
-  configured: boolean;
-  missingFields?: string[];
-  region?: string;
-  batchQueue?: string;
-  batchJobDefinition?: string;
-  s3Bucket?: string;
-  s3Prefix?: string;
-  cloudWatchLogGroup?: string | null;
-  gpuHint?: string;
-  gpuCountPerJob?: number;
-  accessKeyIdHint?: string;
-  profile?: string;
-  updatedAt?: string;
-};
-
 export type OsuSessionStatus = {
   configured: boolean;
   clientIdHint?: string;
@@ -28,10 +12,8 @@ export type SessionResponse = {
   spotdlAcknowledgedAt: string | null;
   providers?: {
     spotify: { connected: boolean; available: boolean };
-    apple: { connected: boolean; available: boolean; comingSoon?: boolean };
   };
   runtime?: {
-    hostedAws?: HostedAwsSessionStatus;
     osu?: OsuSessionStatus;
   };
   trackCount?: number;

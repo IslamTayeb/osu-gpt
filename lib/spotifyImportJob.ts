@@ -1,14 +1,21 @@
-import fs from "node:fs";
-import path from "node:path";
 import { importSpotifyLibraryWithProgress } from "./spotifyImport";
 import { readStore, updateStore } from "./store";
+import { Track } from "./types";
 
 let running = false;
 const IMPORT_STALE_AFTER_MS = 20 * 60 * 1000;
-const artifactsDir = path.join(process.cwd(), ".data", "artifacts");
 
-function clearImportCache() {
-  fs.rmSync(artifactsDir, { recursive: true, force: true });
+/**
+ * Merge freshly imported tracks over what is already stored. A re-import used to
+ * delete every track, job, match, and cached artifact, which threw away work and
+ * forced every song to be downloaded again.
+ */
+function upsertTracks(existing: Track[], incoming: Track[]): Track[] {
+  const byId = new Map(existing.map((track) => [track.id, track]));
+  for (const track of incoming) {
+    byId.set(track.id, { ...byId.get(track.id), ...track });
+  }
+  return [...byId.values()];
 }
 
 export function getSpotifyImportStatus() {
@@ -44,16 +51,12 @@ export function startSpotifyImportJob(accessToken: string) {
 
   running = true;
   const startedAt = new Date().toISOString();
-  clearImportCache();
 
   updateStore((store) => {
-    store.tracks = [];
-    store.jobs = [];
-    store.matchesByTrackId = {};
     store.settings.spotifyImport = {
       status: "running",
       phase: "init",
-      message: "Starting liked songs import from a clean cache...",
+      message: "Starting liked songs import...",
       importedCount: 0,
       startedAt,
       error: undefined,
@@ -72,14 +75,13 @@ export function startSpotifyImportJob(accessToken: string) {
           status.message = progress.message;
           status.importedCount = progress.importedCount;
           if (progress.tracksSnapshot) {
-            store.tracks = progress.tracksSnapshot;
+            store.tracks = upsertTracks(store.tracks, progress.tracksSnapshot);
           }
         });
       });
 
       updateStore((store) => {
-        store.tracks = tracks;
-        store.matchesByTrackId = {};
+        store.tracks = upsertTracks(store.tracks, tracks);
         store.settings.spotifyImport = {
           status: "completed",
           phase: "done",

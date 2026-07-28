@@ -1,721 +1,415 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCcw } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { AuthShell } from "@/components/workspace/auth-shell";
+import { GenerationPanel } from "@/components/workspace/generation-panel";
+import { JobsPane } from "@/components/workspace/jobs-pane";
+import { LibraryPane } from "@/components/workspace/library-pane";
+import { SettingsPanel } from "@/components/workspace/settings-panel";
+import { importProgress } from "@/lib/homeUi";
 import type {
+  AppSettings,
   GenerationJob,
-  MatchResult,
+  GeneratorParams,
+  ModelVersion,
   SpotifyImportStatus,
   Track,
-  TrackMatchSnapshot,
 } from "@/lib/types";
-import { Button } from "@/components/ui/button";
-import { AuthShell } from "@/components/workspace/auth-shell";
-import { FiltersPane } from "@/components/workspace/filters-pane";
-import { LibraryPane } from "@/components/workspace/library-pane";
-import type { ExactReviewItem, NonExactReviewItem } from "@/components/workspace/match-review-panel";
-import { ActionsPane } from "@/components/workspace/right-pane/actions-pane";
-import type { GenerationProfileSectionProps } from "@/components/workspace/right-pane/types";
-import type {
-  BatchMatchResponse,
-  HostedAwsSessionStatus,
-  OsuSessionStatus,
-  SessionResponse,
-  TracksResponse,
-} from "@/lib/homeTypes";
-import { useLibrarySelection } from "@/hooks/use-library-selection";
-import { useGenerationProfileConfig } from "@/hooks/use-generation-profile-config";
-import { useRuntimeActions } from "@/hooks/use-runtime-actions";
-import { useMatchWorkflow } from "@/hooks/use-match-workflow";
-import { useGenerationWorkflow } from "@/hooks/use-generation-workflow";
-import { useSelectionDerived } from "@/hooks/use-selection-derived";
-import { useWorkspaceDataEffects } from "@/hooks/use-workspace-data-effects";
-import { useSpotifyImportWorkflow } from "@/hooks/use-spotify-import-workflow";
 
-const defaultImportStatus: SpotifyImportStatus = { status: "idle" };
-
-type MatchFilter = "all" | "matched" | "unmatched" | "generated";
-type ProviderFilter = "all" | Track["provider"];
-type SourceFilter = "all" | Track["source"];
-type TrackQueryState = {
-  page: number;
-  pageSize: number;
-  providerFilter: ProviderFilter;
-  sourceFilter: SourceFilter;
-  matchFilter: MatchFilter;
-  debouncedQuery: string;
+type SessionResponse = {
+  spotifyConnected: boolean;
+  spotdlAcknowledgedAt: string | null;
+  trackCount: number;
+  importStatus: SpotifyImportStatus;
 };
 
+type MatchFilter = "all" | "matched" | "unmatched" | "generated";
+
 export default function Home() {
+  const [bootstrapping, setBootstrapping] = useState(true);
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [spotdlAckAt, setSpotdlAckAt] = useState<string | null>(null);
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [trackCacheById, setTrackCacheById] = useState<Record<string, Track>>({});
-  const [matchSnapshots, setMatchSnapshots] = useState<Record<string, TrackMatchSnapshot>>({});
-  const [jobs, setJobs] = useState<GenerationJob[]>([]);
-  const [importStatus, setImportStatus] = useState<SpotifyImportStatus>(defaultImportStatus);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
 
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [tracksTotal, setTracksTotal] = useState(0);
+  const [tracksLoading, setTracksLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("liked");
   const [matchFilter, setMatchFilter] = useState<MatchFilter>("all");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(60);
-  const [tracksTotal, setTracksTotal] = useState(0);
-  const [totalTracks, setTotalTracks] = useState(0);
-  const [visibleStart, setVisibleStart] = useState(0);
-  const [visibleEnd, setVisibleEnd] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
+  const pageSize = 100;
 
-  const [runtime, setRuntime] = useState<"local" | "hosted_aws">("hosted_aws");
-  const [preset, setPreset] = useState<"quick" | "balanced" | "high_quality">("balanced");
-  const [timeoutSec, setTimeoutSec] = useState(600);
-  const [budgetCapUsd, setBudgetCapUsd] = useState(50);
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
+  const lastClickedRef = useRef<string | null>(null);
 
-  const [awsSessionStatus, setAwsSessionStatus] = useState<HostedAwsSessionStatus>({ configured: false });
-  const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
-  const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
-  const [awsSessionToken, setAwsSessionToken] = useState("");
-  const [awsProfile, setAwsProfile] = useState("default");
-  const [awsRegion, setAwsRegion] = useState("");
-  const [awsBatchQueue, setAwsBatchQueue] = useState("");
-  const [awsBatchJobDefinition, setAwsBatchJobDefinition] = useState("");
-  const [awsS3Bucket, setAwsS3Bucket] = useState("");
-  const [awsS3Prefix, setAwsS3Prefix] = useState("osu-gpt");
-  const [awsCloudWatchLogGroup, setAwsCloudWatchLogGroup] = useState("/aws/batch/job");
-
-  const [osuSessionStatus, setOsuSessionStatus] = useState<OsuSessionStatus>({ configured: false });
-  const [osuClientId, setOsuClientId] = useState("");
-  const [osuClientSecret, setOsuClientSecret] = useState("");
-
-  const [bootstrapping, setBootstrapping] = useState(true);
-  const [tracksLoading, setTracksLoading] = useState(false);
-  const [jobsLoading, setJobsLoading] = useState(false);
-  const [tracksLoadedOnce, setTracksLoadedOnce] = useState(false);
-  const [jobsLoadedOnce, setJobsLoadedOnce] = useState(false);
-
+  const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const [busy, setBusy] = useState(false);
-  const [matching, setMatching] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [lastMatchSummary, setLastMatchSummary] = useState<BatchMatchResponse["summary"] | null>(null);
-  const [promotedTopHitsByTrackId, setPromotedTopHitsByTrackId] = useState<
-    Record<string, MatchResult>
-  >({});
-  const [approvedMatchesByTrackId, setApprovedMatchesByTrackId] = useState<
-    Record<string, MatchResult>
-  >({});
+  const [importStatus, setImportStatus] = useState<SpotifyImportStatus>({ status: "idle" });
 
-  const debouncedQueryRef = useRef("");
-  const libraryScrollRef = useRef<HTMLDivElement | null>(null);
+  const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const {
-    stylePresetId,
-    stylePresetOptions,
-    selectedStylePresetDescription,
-    applyStylePreset,
-    mapperChoiceId,
-    mapperStyleOptions,
-    selectedMapperOptionDescription,
-    applyMapperChoice,
-    updateCustomMapperId,
-    generatorParams,
-    updateGeneratorParam,
-  } = useGenerationProfileConfig();
+  const [showSettings, setShowSettings] = useState(false);
 
-  const {
-    selectedTrackIds,
-    selectedTrackSet,
-    selectionRect,
-    toggleTrack,
-    selectPageTracks,
-    clearSelection,
-    handleLibraryPointerDown,
-    handleLibraryPointerMove,
-    handleLibraryPointerEnd,
-  } = useLibrarySelection({
-    tracks,
-    libraryScrollRef,
-  });
+  // Session + settings bootstrap
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [sessionResponse, settingsResponse] = await Promise.all([
+          fetch("/api/session"),
+          fetch("/api/settings"),
+        ]);
+        const session = (await sessionResponse.json()) as SessionResponse;
+        const { settings: loaded } = (await settingsResponse.json()) as { settings: AppSettings };
+        setSpotifyConnected(session.spotifyConnected);
+        setSpotdlAckAt(session.spotdlAcknowledgedAt);
+        setImportStatus(session.importStatus ?? { status: "idle" });
+        setSettings(loaded);
+        setShowSettings(!loaded.setupCompletedAt);
+      } catch {
+        toast.error("Could not load the app state.");
+      } finally {
+        setBootstrapping(false);
+      }
+    };
+    void load();
+  }, []);
 
-  const trackById = useMemo(() => {
-    const map = new Map<string, Track>();
-    for (const [trackId, track] of Object.entries(trackCacheById)) {
-      map.set(trackId, track);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const loadTracks = useCallback(async () => {
+    if (!spotifyConnected) return;
+    setTracksLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        match: matchFilter,
+      });
+      if (debouncedQuery) params.set("q", debouncedQuery);
+      const response = await fetch(`/api/library/tracks?${params}`);
+      const data = (await response.json()) as { tracks: Track[]; total: number };
+      setTracks(data.tracks ?? []);
+      setTracksTotal(data.total ?? 0);
+    } catch {
+      toast.error("Could not load your library.");
+    } finally {
+      setTracksLoading(false);
     }
-    return map;
-  }, [trackCacheById]);
+  }, [spotifyConnected, page, matchFilter, debouncedQuery]);
 
-  const completedTrackIdSet = useMemo(
+  useEffect(() => {
+    void loadTracks();
+  }, [loadTracks]);
+
+  const loadJobs = useCallback(async () => {
+    try {
+      const response = await fetch("/api/generation/jobs");
+      const data = (await response.json()) as { jobs: GenerationJob[] };
+      setJobs(data.jobs ?? []);
+    } catch {
+      // The poll retries on its own.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!spotifyConnected) return;
+    void loadJobs();
+    const timer = setInterval(loadJobs, 2500);
+    return () => clearInterval(timer);
+  }, [spotifyConnected, loadJobs]);
+
+  const tracksById = useMemo(
+    () => Object.fromEntries(tracks.map((track) => [track.id, track])),
+    [tracks],
+  );
+  const completedTrackIds = useMemo(
     () => new Set(jobs.filter((job) => job.status === "completed").map((job) => job.trackId)),
     [jobs],
   );
 
-  const hasActiveJobs = useMemo(
-    () => jobs.some((job) => job.status === "queued" || job.status === "running"),
-    [jobs],
-  );
-
-  const { selectionStats, matchedSelected, unmatchedTopHits } = useSelectionDerived({
-    selectedTrackIds,
-    matchSnapshots,
-    completedTrackIdSet,
-    trackById,
-  });
-
-  const exactReviewItems = useMemo<ExactReviewItem[]>(() => {
-    const byTrackId = new Map<string, ExactReviewItem>();
-    for (const { track, snapshot } of matchedSelected) {
-      const exactMatches = snapshot.matches.slice(0, 5);
-      if (exactMatches.length === 0) continue;
-      byTrackId.set(track.id, {
-        track,
-        matches: exactMatches,
-        source: "exact",
-        strongMatch: snapshot.strongMatch,
+  const toggleTrack = useCallback(
+    (trackId: string, shiftKey: boolean) => {
+      setSelectedTrackIds((previous) => {
+        const next = new Set(previous);
+        if (shiftKey && lastClickedRef.current) {
+          const start = tracks.findIndex((t) => t.id === lastClickedRef.current);
+          const end = tracks.findIndex((t) => t.id === trackId);
+          if (start >= 0 && end >= 0) {
+            const [from, to] = start < end ? [start, end] : [end, start];
+            for (let index = from; index <= to; index += 1) next.add(tracks[index].id);
+            return next;
+          }
+        }
+        if (next.has(trackId)) next.delete(trackId);
+        else next.add(trackId);
+        return next;
       });
-    }
-
-    for (const trackId of selectedTrackIds) {
-      if (byTrackId.has(trackId)) continue;
-      const track = trackById.get(trackId);
-      const promoted = promotedTopHitsByTrackId[trackId];
-      if (!track || !promoted) continue;
-      byTrackId.set(trackId, {
-        track,
-        matches: [promoted],
-        source: "promoted",
-        strongMatch: false,
-      });
-    }
-
-    return Array.from(byTrackId.values());
-  }, [matchedSelected, promotedTopHitsByTrackId, selectedTrackIds, trackById]);
-
-  const nonExactReviewItems = useMemo<NonExactReviewItem[]>(() => {
-    const items: NonExactReviewItem[] = [];
-    for (const { track, snapshot } of unmatchedTopHits) {
-      if (!track || !snapshot?.topHit || promotedTopHitsByTrackId[track.id]) {
-        continue;
-      }
-      items.push({
-        track,
-        topHit: snapshot.topHit,
-      });
-    }
-    return items;
-  }, [unmatchedTopHits, promotedTopHitsByTrackId]);
-
-  const approvedSelectedCount = useMemo(
-    () => selectedTrackIds.filter((trackId) => Boolean(approvedMatchesByTrackId[trackId])).length,
-    [selectedTrackIds, approvedMatchesByTrackId],
-  );
-
-  const selectedTrackIdsForGeneration = useMemo(
-    () => selectedTrackIds.filter((trackId) => !approvedMatchesByTrackId[trackId]),
-    [selectedTrackIds, approvedMatchesByTrackId],
-  );
-
-  const handlePromoteTopHit = useCallback(
-    (trackId: string) => {
-      const snapshot = matchSnapshots[trackId];
-      const topHit = snapshot?.topHit;
-      if (!topHit) return;
-      setPromotedTopHitsByTrackId((previous) => ({ ...previous, [trackId]: topHit }));
+      lastClickedRef.current = trackId;
     },
-    [matchSnapshots],
+    [tracks],
   );
 
-  const handleRemovePromotedTopHit = useCallback((trackId: string) => {
-    setPromotedTopHitsByTrackId((previous) => {
-      if (!previous[trackId]) return previous;
-      const next = { ...previous };
-      delete next[trackId];
-      return next;
-    });
-    setApprovedMatchesByTrackId((previous) => {
-      if (!previous[trackId]) return previous;
-      const next = { ...previous };
-      delete next[trackId];
-      return next;
-    });
-  }, []);
-
-  const handleApproveMatch = useCallback((trackId: string, match: MatchResult) => {
-    setApprovedMatchesByTrackId((previous) => ({ ...previous, [trackId]: match }));
-  }, []);
-
-  const handleClearApprovedMatch = useCallback((trackId: string) => {
-    setApprovedMatchesByTrackId((previous) => {
-      if (!previous[trackId]) return previous;
-      const next = { ...previous };
-      delete next[trackId];
-      return next;
-    });
-  }, []);
-
-  const fetchSession = useCallback(async () => {
-    const response = await fetch("/api/session", { cache: "no-store" });
-    const data = (await response.json()) as SessionResponse;
-    setSpotifyConnected(Boolean(data.spotifyConnected));
-    setSpotdlAckAt(data.spotdlAcknowledgedAt ?? null);
-    setImportStatus(data.importStatus ?? defaultImportStatus);
-
-    const hostedAws = data.runtime?.hostedAws;
-    if (hostedAws) {
-      setAwsSessionStatus(hostedAws);
-      if (hostedAws.configured) {
-        setAwsProfile((prev) => hostedAws.profile || prev || "default");
-        setAwsRegion((prev) => prev || hostedAws.region || "");
-        setAwsBatchQueue((prev) => prev || hostedAws.batchQueue || "");
-        setAwsBatchJobDefinition((prev) => prev || hostedAws.batchJobDefinition || "");
-        setAwsS3Bucket((prev) => prev || hostedAws.s3Bucket || "");
-        setAwsS3Prefix((prev) => prev || hostedAws.s3Prefix || "osu-gpt");
-        setAwsCloudWatchLogGroup((prev) => prev || hostedAws.cloudWatchLogGroup || "/aws/batch/job");
+  const togglePreview = useCallback(
+    (track: Track) => {
+      if (playingTrackId === track.id) {
+        audioRef.current?.pause();
+        setPlayingTrackId(null);
+        return;
       }
-    } else {
-      setAwsSessionStatus({ configured: false });
-    }
+      audioRef.current?.pause();
+      const audio = new Audio(`/api/previews/${encodeURIComponent(track.id)}`);
+      audio.onended = () => setPlayingTrackId(null);
+      audio.onerror = () => {
+        setPlayingTrackId(null);
+        toast.error(`No preview found for "${track.title}".`);
+      };
+      audioRef.current = audio;
+      void audio.play().catch(() => setPlayingTrackId(null));
+      setPlayingTrackId(track.id);
+    },
+    [playingTrackId],
+  );
 
-    const osuRuntime = data.runtime?.osu;
-    if (osuRuntime) {
-      setOsuSessionStatus(osuRuntime);
-    } else {
-      setOsuSessionStatus({ configured: false });
+  useEffect(() => () => audioRef.current?.pause(), []);
+
+  const saveSettings = useCallback(async (patch: Partial<AppSettings>) => {
+    const response = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const data = (await response.json()) as { settings?: AppSettings; error?: string };
+    if (!response.ok || !data.settings) {
+      toast.error(data.error ?? "Could not save settings.");
+      return;
     }
+    setSettings(data.settings);
+    if (data.settings.setupCompletedAt) setShowSettings(false);
+    toast.success("Settings saved.");
   }, []);
 
-  const fetchTracks = useCallback(
-    async (overrides?: Partial<TrackQueryState>) => {
-      const nextPage = overrides?.page ?? page;
-      const nextPageSize = overrides?.pageSize ?? pageSize;
-      const nextProviderFilter = overrides?.providerFilter ?? providerFilter;
-      const nextSourceFilter = overrides?.sourceFilter ?? sourceFilter;
-      const nextMatchFilter = overrides?.matchFilter ?? matchFilter;
-      const nextDebouncedQuery = overrides?.debouncedQuery ?? debouncedQuery;
+  const acknowledgeSpotdl = useCallback(async () => {
+    await fetch("/api/settings/ack", { method: "POST" });
+    setSpotdlAckAt(new Date().toISOString());
+  }, []);
 
-      setTracksLoading(true);
+  const generate = useCallback(
+    async (input: {
+      generatorParams: GeneratorParams;
+      modelVersion: ModelVersion;
+      experimentalCompile: boolean;
+    }) => {
+      if (selectedTrackIds.size === 0) return;
+      setBusy(true);
       try {
-        const params = new URLSearchParams({
-          page: String(nextPage),
-          pageSize: String(nextPageSize),
-          provider: nextProviderFilter,
-          source: nextSourceFilter,
-          match: nextMatchFilter,
+        const response = await fetch("/api/generation/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ trackIds: [...selectedTrackIds], ...input }),
         });
-        if (nextDebouncedQuery) {
-          params.set("query", nextDebouncedQuery);
+        const data = (await response.json()) as { jobs?: GenerationJob[]; error?: string };
+        if (!response.ok) {
+          toast.error(data.error ?? "Could not queue generation.");
+          return;
         }
-
-        const response = await fetch(`/api/library/tracks?${params.toString()}`, { cache: "no-store" });
-        const data = (await response.json()) as TracksResponse;
-        const nextTracks = data.tracks ?? [];
-        setTracks(nextTracks);
-        setMatchSnapshots((previous) => ({ ...previous, ...(data.matchesByTrackId ?? {}) }));
-        setTotalTracks(data.totalTracks ?? 0);
-        setTracksTotal(data.pagination?.total ?? 0);
-        setTotalPages(data.pagination?.totalPages ?? 1);
-        setVisibleStart(data.pagination?.start ?? 0);
-        setVisibleEnd(data.pagination?.end ?? 0);
-        if (data.pagination?.page && data.pagination.page !== nextPage) {
-          setPage(data.pagination.page);
-        }
-        setTracksLoadedOnce(true);
+        toast.success(`Queued ${data.jobs?.length ?? 0} map(s).`);
+        void loadJobs();
       } finally {
-        setTracksLoading(false);
+        setBusy(false);
       }
     },
-    [page, pageSize, providerFilter, sourceFilter, matchFilter, debouncedQuery],
+    [selectedTrackIds, loadJobs],
   );
 
-  const fetchJobs = useCallback(async () => {
-    setJobsLoading(true);
+  const syncLibrary = useCallback(async () => {
+    setBusy(true);
     try {
-      const response = await fetch("/api/generation/jobs", { cache: "no-store" });
-      const data = (await response.json()) as { jobs?: GenerationJob[] };
-      setJobs(data.jobs ?? []);
-      setJobsLoadedOnce(true);
+      await fetch("/api/library/spotify/import", { method: "POST" });
+      toast.success("Import started.");
     } finally {
-      setJobsLoading(false);
+      setBusy(false);
     }
   }, []);
 
-  const fetchImportStatus = useCallback(async () => {
-    const response = await fetch("/api/library/spotify/import-status", { cache: "no-store" });
-    const data = (await response.json()) as { status?: SpotifyImportStatus };
-    const status = data.status ?? defaultImportStatus;
-    setImportStatus(status);
-    return status;
-  }, []);
-
+  // Poll import progress while it runs.
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const nextQuery = query.trim();
-      if (debouncedQueryRef.current === nextQuery) {
-        return;
-      }
-      debouncedQueryRef.current = nextQuery;
-      setDebouncedQuery(nextQuery);
-      setPage(1);
-      void fetchTracks({ debouncedQuery: nextQuery, page: 1 });
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [fetchTracks, query]);
-
-  useWorkspaceDataEffects({
-    fetchSession,
-    fetchJobs,
-    fetchImportStatus,
-    fetchTracks,
-    hasActiveJobs,
-    importStatusState: importStatus.status,
-    tracks,
-    setTrackCacheById,
-    setBootstrapping,
-  });
-
-  const handleProviderFilterChange = useCallback(
-    (next: ProviderFilter) => {
-      if (next === providerFilter) {
-        return;
-      }
-      setProviderFilter(next);
-      setPage(1);
-      void fetchTracks({ providerFilter: next, page: 1 });
-    },
-    [fetchTracks, providerFilter],
-  );
-
-  const handleSourceFilterChange = useCallback(
-    (next: SourceFilter) => {
-      if (next === sourceFilter) {
-        return;
-      }
-      setSourceFilter(next);
-      setPage(1);
-      void fetchTracks({ sourceFilter: next, page: 1 });
-    },
-    [fetchTracks, sourceFilter],
-  );
-
-  const handleMatchFilterChange = useCallback(
-    (next: MatchFilter) => {
-      if (next === matchFilter) {
-        return;
-      }
-      setMatchFilter(next);
-      setPage(1);
-      void fetchTracks({ matchFilter: next, page: 1 });
-    },
-    [fetchTracks, matchFilter],
-  );
-
-  const handlePageSizeChange = useCallback(
-    (next: number) => {
-      const nextPageSize = Math.max(20, Number.isFinite(next) ? next : 60);
-      if (nextPageSize === pageSize) {
-        return;
-      }
-      setPageSize(nextPageSize);
-      setPage(1);
-      void fetchTracks({ pageSize: nextPageSize, page: 1 });
-    },
-    [fetchTracks, pageSize],
-  );
-
-  const handlePrevPage = useCallback(() => {
-    const nextPage = Math.max(1, page - 1);
-    if (nextPage === page) {
-      return;
-    }
-    setPage(nextPage);
-    void fetchTracks({ page: nextPage });
-  }, [fetchTracks, page]);
-
-  const handleNextPage = useCallback(() => {
-    const nextPage = Math.min(totalPages, page + 1);
-    if (nextPage === page) {
-      return;
-    }
-    setPage(nextPage);
-    void fetchTracks({ page: nextPage });
-  }, [fetchTracks, page, totalPages]);
-
-  const { importSpotify } = useSpotifyImportWorkflow({
-    spotifyConnected,
-    bootstrapping,
-    clearSelection,
-    fetchImportStatus,
-    fetchTracks,
-    setBusy,
-    setError,
-    setNotice,
-    setTracks,
-    setTrackCacheById,
-    setMatchSnapshots,
-    setJobs,
-    setTracksTotal,
-    setTotalTracks,
-    setVisibleStart,
-    setVisibleEnd,
-    setTotalPages,
-    setPage,
-  });
-
-  const {
-    acknowledgeSpotdl,
-    saveOsuRuntimeSession,
-    clearOsuRuntimeSession,
-    saveAwsRuntimeSession,
-    loadAwsRuntimeSessionFromCli,
-    autoLoadAwsRuntimeSession,
-    clearAwsRuntimeSession,
-    saveAwsRuntimeResources,
-    logoutSpotify,
-  } = useRuntimeActions({
-    fetchSession,
-    clearSelection,
-    setBusy,
-    setError,
-    setNotice,
-    setSpotdlAckAt,
-    setOsuSessionStatus,
-    setOsuClientId,
-    setOsuClientSecret,
-    setAwsSessionStatus,
-    setAwsAccessKeyId,
-    setAwsSecretAccessKey,
-    setAwsSessionToken,
-    setAwsRegion,
-    setAwsBatchQueue,
-    setAwsBatchJobDefinition,
-    setAwsS3Bucket,
-    setAwsS3Prefix,
-    setAwsCloudWatchLogGroup,
-    setTracks,
-    setTrackCacheById,
-    setJobs,
-    setMatchSnapshots,
-    setLastMatchSummary,
-    setTracksTotal,
-    setTotalTracks,
-    setVisibleStart,
-    setVisibleEnd,
-    setTotalPages,
-    setPage,
-    osuClientId,
-    osuClientSecret,
-    awsAccessKeyId,
-    awsSecretAccessKey,
-    awsSessionToken,
-    awsProfile,
-    awsRegion,
-    awsBatchQueue,
-    awsBatchJobDefinition,
-    awsS3Bucket,
-    awsS3Prefix,
-    awsCloudWatchLogGroup,
-  });
-
-  const { runBatchMatch } = useMatchWorkflow({
-    selectedTrackIds,
-    setMatching,
-    setError,
-    setNotice,
-    setMatchSnapshots,
-    setLastMatchSummary,
-    fetchTracks,
-  });
-
-  const { queueGeneration, downloadZip } = useGenerationWorkflow({
-    selectedTrackIds,
-    spotdlAckAt,
-    runtime,
-    awsConfigured: awsSessionStatus.configured,
-    preset,
-    timeoutSec,
-    budgetCapUsd,
-    generatorParams,
-    setBusy,
-    setError,
-    setNotice,
-    fetchJobs,
-  });
-
-  const showLibrarySkeleton =
-    (!tracksLoadedOnce && (tracksLoading || bootstrapping)) || (bootstrapping && tracks.length === 0);
-
-  const generationProfileProps: GenerationProfileSectionProps = {
-    runtime,
-    onRuntimeChange: setRuntime,
-    preset,
-    onPresetChange: setPreset,
-    stylePresetId,
-    stylePresetOptions,
-    selectedStylePresetDescription,
-    onApplyStylePreset: applyStylePreset,
-    mapperChoiceId,
-    mapperStylePresets: mapperStyleOptions,
-    selectedMapperOptionDescription,
-    onApplyMapperChoice: applyMapperChoice,
-    onUpdateCustomMapperId: updateCustomMapperId,
-    generatorParams,
-    onUpdateGeneratorParam: updateGeneratorParam,
-    timeoutSec,
-    onTimeoutSecChange: setTimeoutSec,
-    budgetCapUsd,
-    onBudgetCapUsdChange: setBudgetCapUsd,
-    awsSessionStatus,
-    awsProfile,
-    onAwsProfileChange: setAwsProfile,
-    awsRegion,
-    onAwsRegionChange: setAwsRegion,
-    awsBatchQueue,
-    onAwsBatchQueueChange: setAwsBatchQueue,
-    awsBatchJobDefinition,
-    onAwsBatchJobDefinitionChange: setAwsBatchJobDefinition,
-    awsS3Bucket,
-    onAwsS3BucketChange: setAwsS3Bucket,
-    awsS3Prefix,
-    onAwsS3PrefixChange: setAwsS3Prefix,
-    awsCloudWatchLogGroup,
-    onAwsCloudWatchLogGroupChange: setAwsCloudWatchLogGroup,
-    awsAccessKeyId,
-    onAwsAccessKeyIdChange: setAwsAccessKeyId,
-    awsSecretAccessKey,
-    onAwsSecretAccessKeyChange: setAwsSecretAccessKey,
-    awsSessionToken,
-    onAwsSessionTokenChange: setAwsSessionToken,
-    onAutoLoadAwsRuntimeSession: autoLoadAwsRuntimeSession,
-    onLoadAwsRuntimeSessionFromCli: loadAwsRuntimeSessionFromCli,
-    onClearAwsRuntimeSession: clearAwsRuntimeSession,
-    onSaveAwsRuntimeResources: saveAwsRuntimeResources,
-    onSaveAwsRuntimeSession: saveAwsRuntimeSession,
-    busy,
-    approvedSelectedCount,
-    generatableSelectedCount: selectedTrackIdsForGeneration.length,
-    selectedTrackCount: selectedTrackIds.length,
-    onGenerateSelected: async () => queueGeneration(selectedTrackIdsForGeneration),
-    onGenerateAllSelected: async () => queueGeneration(selectedTrackIds),
-  };
+    if (importStatus.status !== "running") return;
+    const timer = setInterval(async () => {
+      const response = await fetch("/api/library/spotify/import-status");
+      const data = (await response.json()) as { importStatus: SpotifyImportStatus };
+      setImportStatus(data.importStatus);
+      if (data.importStatus.status !== "running") void loadTracks();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [importStatus.status, loadTracks]);
 
   if (!spotifyConnected) {
-    return (
-      <div className="app-root">
-        <AuthShell bootstrapping={bootstrapping} />
-      </div>
-    );
+    return <AuthShell bootstrapping={bootstrapping} />;
   }
 
+  const totalPages = Math.max(1, Math.ceil(tracksTotal / pageSize));
+
   return (
-    <div className="app-root">
-      <main className="workspace">
-        <header className="workspace-header">
-          <div>
-            <h1 className="workspace-title">osu-gpt Workspace</h1>
-            <p className="workspace-meta">
-              Liked Songs: {totalTracks} | Selected: {selectionStats.total} | Matched:{" "}
-              {selectionStats.matched} | Unmatched: {selectionStats.unmatched} | Generated:{" "}
-              {selectionStats.generated}
-            </p>
-          </div>
-          <div className="workspace-actions">
-            <Button
-              variant="secondary"
-              onClick={() => void importSpotify()}
-              disabled={busy || importStatus.status === "running"}
-            >
-              <RefreshCcw size={14} /> Sync Liked Songs
-            </Button>
-            <Button variant="ghost" onClick={logoutSpotify}>
-              Disconnect Spotify
-            </Button>
-          </div>
-        </header>
+    <div className="app">
+      <div className="royb-band" aria-hidden>
+        <span />
+        <span />
+        <span />
+        <span />
+      </div>
+      <header className="app__header">
+        <h1 className="app__title">osu-gpt</h1>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <span className="muted">{tracksTotal} tracks</span>
+          <Button variant="ghost" onClick={syncLibrary} disabled={busy}>
+            Sync liked songs
+          </Button>
+          <Button variant="ghost" onClick={() => setShowSettings((value) => !value)}>
+            Settings
+          </Button>
+        </div>
+      </header>
 
-        <section className="workspace-grid">
-          <FiltersPane
-            query={query}
-            onQueryChange={setQuery}
-            providerFilter={providerFilter}
-            onProviderFilterChange={handleProviderFilterChange as (next: "all" | "spotify" | "apple") => void}
-            sourceFilter={sourceFilter}
-            onSourceFilterChange={
-              handleSourceFilterChange as (next: "all" | "liked" | "playlist" | "library") => void
-            }
-            matchFilter={matchFilter}
-            onMatchFilterChange={
-              handleMatchFilterChange as (next: "all" | "matched" | "unmatched" | "generated") => void
-            }
-            pageSize={pageSize}
-            onPageSizeChange={handlePageSizeChange}
-            page={page}
-            totalPages={totalPages}
-            onPrevPage={handlePrevPage}
-            onNextPage={handleNextPage}
-            visibleStart={visibleStart}
-            visibleEnd={visibleEnd}
-            tracksTotal={tracksTotal}
-            onSelectPageTracks={selectPageTracks}
-            onClearSelection={clearSelection}
-            pageTracksCount={tracks.length}
-            importStatus={importStatus}
-            busy={busy}
-            matching={matching}
-            osuSessionStatus={osuSessionStatus}
-            osuClientId={osuClientId}
-            onOsuClientIdChange={setOsuClientId}
-            osuClientSecret={osuClientSecret}
-            onOsuClientSecretChange={setOsuClientSecret}
-            onSaveOsuRuntimeSession={saveOsuRuntimeSession}
-            onClearOsuRuntimeSession={clearOsuRuntimeSession}
-            onRunBatchMatch={runBatchMatch}
-            selectedTrackCount={selectedTrackIds.length}
-            lastMatchSummary={lastMatchSummary}
-            exactReviewItems={exactReviewItems}
-            nonExactReviewItems={nonExactReviewItems}
-            approvedMatchesByTrackId={approvedMatchesByTrackId}
-            onApproveMatch={handleApproveMatch}
-            onClearApprovedMatch={handleClearApprovedMatch}
-            onPromoteTopHit={handlePromoteTopHit}
-            onRemovePromotedTopHit={handleRemovePromotedTopHit}
-          />
+      {importStatus.status === "running" ? (
+        <div className="banner">
+          Importing your library… {importProgress(importStatus)}%
+          {importStatus.importedCount ? ` (${importStatus.importedCount} tracks)` : ""}
+        </div>
+      ) : null}
 
+      {!spotdlAckAt ? (
+        <div className="banner" data-tone="error">
+          Generation downloads song audio from public sources for personal use.{" "}
+          <Button variant="ghost" onClick={acknowledgeSpotdl}>
+            I understand
+          </Button>
+        </div>
+      ) : null}
+
+      <div className="workspace-grid">
+        <aside className="pane">
+          <div className="pane__body section">
+            <h2 className="section__title">Filter</h2>
+            <Input
+              placeholder="Search title or artist"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
+            />
+            <label className="field">
+              <span className="field__label">Show</span>
+              <select
+                className="ui-select"
+                value={matchFilter}
+                onChange={(event) => {
+                  setMatchFilter(event.target.value as MatchFilter);
+                  setPage(1);
+                }}
+              >
+                <option value="all">All tracks</option>
+                <option value="unmatched">No existing map</option>
+                <option value="matched">Has existing map</option>
+                <option value="generated">Already generated</option>
+              </select>
+            </label>
+            <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+              <Button
+                variant="ghost"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                Prev
+              </Button>
+              <span className="muted">
+                {page} / {totalPages}
+              </span>
+              <Button
+                variant="ghost"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                Next
+              </Button>
+            </div>
+            <div style={{ display: "flex", gap: "0.4rem" }}>
+              <Button
+                variant="ghost"
+                onClick={() => setSelectedTrackIds(new Set(tracks.map((t) => t.id)))}
+              >
+                Select page
+              </Button>
+              <Button variant="ghost" onClick={() => setSelectedTrackIds(new Set())}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        </aside>
+
+        <main className="pane">
+          <div className="pane__header">
+            <h2 className="section__title">Library — {selectedTrackIds.size} selected</h2>
+          </div>
           <LibraryPane
-            visibleStart={visibleStart}
-            visibleEnd={visibleEnd}
-            tracksTotal={tracksTotal}
-            selectedCount={selectedTrackIds.length}
-            tracksLoading={tracksLoading}
-            scrollRef={libraryScrollRef}
-            onPointerDown={handleLibraryPointerDown}
-            onPointerMove={handleLibraryPointerMove}
-            onPointerEnd={handleLibraryPointerEnd}
-            showLibrarySkeleton={showLibrarySkeleton}
             tracks={tracks}
-            selectedTrackSet={selectedTrackSet}
-            completedTrackIdSet={completedTrackIdSet}
+            loading={tracksLoading}
+            selectedTrackIds={selectedTrackIds}
+            completedTrackIds={completedTrackIds}
+            playingTrackId={playingTrackId}
             onToggleTrack={toggleTrack}
-            selectionRect={selectionRect}
+            onTogglePreview={togglePreview}
           />
+        </main>
 
-          <ActionsPane
-            bootstrapping={bootstrapping}
-            jobsLoadedOnce={jobsLoadedOnce}
-            spotdlAckAt={spotdlAckAt}
-            busy={busy}
-            onAcknowledgeSpotdl={acknowledgeSpotdl}
-            selectedTrackCount={selectedTrackIds.length}
-            generationProfileProps={generationProfileProps}
-            jobs={jobs}
-            jobsLoading={jobsLoading}
-            onDownloadZip={downloadZip}
-            error={error}
-            notice={notice}
-          />
-        </section>
-      </main>
+        <aside className="pane">
+          <div className="pane__body">
+            {settings && showSettings ? (
+              <SettingsPanel
+                settings={settings}
+                onSave={saveSettings}
+                firstRun={!settings.setupCompletedAt}
+              />
+            ) : null}
+            {settings && !showSettings ? (
+              <GenerationPanel
+                key={settings.setupCompletedAt ?? "initial"}
+                settings={settings}
+                selectedCount={selectedTrackIds.size}
+                busy={busy}
+                onGenerate={generate}
+              />
+            ) : null}
+            <section className="section">
+              <h2 className="section__title">Jobs</h2>
+              <JobsPane
+                jobs={jobs}
+                tracksById={tracksById}
+                onRetry={async (jobId) => {
+                  await fetch(`/api/generation/jobs/${jobId}`, { method: "POST" });
+                  void loadJobs();
+                }}
+                onCancel={async (jobId) => {
+                  await fetch(`/api/generation/jobs/${jobId}`, { method: "DELETE" });
+                  void loadJobs();
+                }}
+                onClearHistory={async () => {
+                  await fetch("/api/generation/jobs", { method: "DELETE" });
+                  void loadJobs();
+                }}
+              />
+            </section>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

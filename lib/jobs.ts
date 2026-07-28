@@ -1,316 +1,187 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { ensureTrackAudio } from "./audio";
+import { appendJobLog } from "./jobLogs";
 import { readStore, updateStore } from "./store";
-import { Artifact, GenerationJob, GeneratorParams, RuntimeType, Track } from "./types";
-import { AwsRuntimeSession } from "./awsSession";
-import { submitHostedAwsJob } from "./awsRuntime";
-import { applyGenerationPreset, generatorParamTemplate, toHydraOverrides } from "./generatorConfig";
+import { Artifact, GenerationJob, GeneratorParams, ModelVersion, Track } from "./types";
+import { dccRuntime } from "./runtime/dcc";
+import { localRuntime } from "./runtime/local";
+import { GenerationRuntime, JobContext } from "./runtime/types";
 
-type CreateJobInput = {
-  trackId: string;
-  runtime: RuntimeType;
-  preset: "quick" | "balanced" | "high_quality";
-  budgetCapUsd: number;
-  timeoutSec: number;
-  generatorParams: GeneratorParams;
-  awsSession?: AwsRuntimeSession | null;
+const ARTIFACT_EXTENSIONS = new Set([".osu", ".osz", ".json", ".txt", ".log"]);
+const RETENTION_DAYS = 7;
+
+const runtimes: Record<GenerationJob["runtime"], GenerationRuntime> = {
+  local: localRuntime,
+  dcc: dccRuntime,
 };
 
-const runningJobs = new Set<string>();
+export function appendLog(jobId: string, line: string) {
+  appendJobLog(jobId, line);
+}
 
-function appendLog(jobId: string, line: string) {
+export function setJobState(jobId: string, patch: Partial<GenerationJob>) {
   updateStore((store) => {
-    const job = store.jobs.find((j) => j.id === jobId);
-    if (!job) return;
-    job.logs.push(line);
-    if (job.logs.length > 600) {
-      job.logs = job.logs.slice(-600);
-    }
+    const job = store.jobs.find((candidate) => candidate.id === jobId);
+    if (job) Object.assign(job, patch);
   });
 }
 
-function setJobState(jobId: string, updates: Partial<GenerationJob>) {
-  updateStore((store) => {
-    const job = store.jobs.find((j) => j.id === jobId);
-    if (!job) return;
-    Object.assign(job, updates);
-  });
-}
+export function collectArtifacts(jobId: string, dir: string): Artifact[] {
+  if (!fs.existsSync(dir)) return [];
+  const expiresAt = new Date(Date.now() + RETENTION_DAYS * 86_400_000).toISOString();
+  const createdAt = new Date().toISOString();
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs / 1000}s`)), timeoutMs);
-    promise
-      .then((v) => {
-        clearTimeout(timer);
-        resolve(v);
-      })
-      .catch((err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-  });
-}
-
-function runCommand(
-  cmd: string,
-  args: string[],
-  cwd: string,
-  timeoutMs: number,
-  onLine: (line: string) => void,
-) {
-  return withTimeout(
-    new Promise<void>((resolve, reject) => {
-      const proc = spawn(cmd, args, { cwd, env: process.env });
-
-      proc.stdout.on("data", (chunk: Buffer) => {
-        const text = chunk.toString("utf8");
-        for (const line of text.split(/\r?\n/)) {
-          if (line.trim()) onLine(line);
-        }
-      });
-
-      proc.stderr.on("data", (chunk: Buffer) => {
-        const text = chunk.toString("utf8");
-        for (const line of text.split(/\r?\n/)) {
-          if (line.trim()) onLine(line);
-        }
-      });
-
-      proc.on("close", (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`${cmd} exited with code ${code}`));
-        }
-      });
-
-      proc.on("error", reject);
-    }),
-    timeoutMs,
-  );
-}
-
-function findFirstAudioFile(dir: string) {
-  const allowed = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac"]);
-  const files = fs.readdirSync(dir).filter((name) => allowed.has(path.extname(name).toLowerCase()));
-  if (files.length === 0) {
-    return null;
-  }
-  files.sort();
-  return path.join(dir, files[0]);
-}
-
-function collectArtifacts(jobId: string, artifactsDir: string): Artifact[] {
-  const expiration = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  const files = fs.readdirSync(artifactsDir);
-  const allowed = new Set([".osu", ".osz", ".json", ".txt", ".log"]);
-
-  return files
-    .filter((name) => allowed.has(path.extname(name).toLowerCase()))
-    .map((fileName) => {
-      const fullPath = path.join(artifactsDir, fileName);
-      const stat = fs.statSync(fullPath);
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && ARTIFACT_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
+    .filter((entry) => entry.name !== "job.log")
+    .map((entry) => {
+      const absolute = path.join(dir, entry.name);
       return {
-        id: randomUUID(),
+        id: crypto.createHash("sha1").update(`${jobId}:${entry.name}`).digest("hex").slice(0, 24),
         jobId,
-        fileName,
-        storage: "local",
-        relativePath: path.relative(process.cwd(), fullPath),
-        sizeBytes: stat.size,
-        createdAt: new Date().toISOString(),
-        expiresAt: expiration,
+        fileName: entry.name,
+        storage: "local" as const,
+        relativePath: path.relative(process.cwd(), absolute),
+        sizeBytes: fs.statSync(absolute).size,
+        expiresAt,
+        createdAt,
       };
     });
 }
 
-function localGeneratorParams(job: GenerationJob, track: Track) {
-  const merged = applyGenerationPreset(
-    {
-      ...generatorParamTemplate,
-      ...job.generatorParams,
-    },
-    job.preset,
-  );
-  if (!merged.title) {
-    merged.title = track.title;
+/** Copy finished beatmaps into the user's export folder, when one is configured. */
+export function exportArtifacts(job: GenerationJob, track: Track) {
+  const exportDir = readStore().settings.exportDir;
+  if (!exportDir) return;
+  try {
+    fs.mkdirSync(exportDir, { recursive: true });
+  } catch (error) {
+    appendLog(job.id, `Could not create export folder: ${error instanceof Error ? error.message : error}`);
+    return;
   }
-  if (!merged.artist) {
-    merged.artist = track.artists.join(", ");
+
+  for (const artifact of job.artifacts) {
+    if (path.extname(artifact.fileName).toLowerCase() !== ".osz" || !artifact.relativePath) continue;
+    const safe = (value: string) => value.replace(/[/\\:*?"<>|]/g, "_").trim();
+    const base = `${safe(track.artists.join(", "))} - ${safe(track.title)} [osu-gpt]`;
+    let destination = path.join(exportDir, `${base}.osz`);
+    let suffix = 2;
+    while (fs.existsSync(destination)) {
+      destination = path.join(exportDir, `${base} (${suffix++}).osz`);
+    }
+    try {
+      fs.copyFileSync(path.resolve(process.cwd(), artifact.relativePath), destination);
+      appendLog(job.id, `Exported to ${destination}`);
+    } catch (error) {
+      appendLog(job.id, `Export failed: ${error instanceof Error ? error.message : error}`);
+    }
   }
-  if (!merged.titleUnicode) {
-    merged.titleUnicode = merged.title;
-  }
-  if (!merged.artistUnicode) {
-    merged.artistUnicode = merged.artist;
-  }
-  if (!merged.creator) {
-    merged.creator = "osu-gpt";
-  }
-  if (!merged.version) {
-    merged.version = "osu-gpt generated";
-  }
-  if (merged.year === null || merged.year === undefined) {
-    merged.year = new Date().getUTCFullYear();
-  }
-  if (merged.gamemode === null || merged.gamemode === undefined) {
-    merged.gamemode = 0;
-  }
-  return merged;
 }
 
-async function runLocalPipeline(job: GenerationJob, track: Track) {
-  const baseDir = path.join(process.cwd(), ".data", "artifacts", job.id);
-  fs.mkdirSync(baseDir, { recursive: true });
+export function createGenerationJob(input: {
+  track: Track;
+  generatorParams: GeneratorParams;
+  modelVersion: ModelVersion;
+  runtime: GenerationJob["runtime"];
+  timeoutSec: number;
+  experimentalCompile?: boolean;
+}): GenerationJob {
+  const job: GenerationJob = {
+    id: crypto.randomUUID(),
+    trackId: input.track.id,
+    runtime: input.runtime,
+    modelVersion: input.modelVersion,
+    generatorParams: input.generatorParams,
+    experimentalCompile: input.experimentalCompile,
+    timeoutSec: input.timeoutSec,
+    status: "queued",
+    artifacts: [],
+    createdAt: new Date().toISOString(),
+  };
+  updateStore((store) => {
+    store.jobs.unshift(job);
+  });
+  return job;
+}
 
-  const spotdlAck = readStore().settings.spotdlAcknowledgedAt;
-  if (!spotdlAck) {
-    throw new Error("spotdl usage must be acknowledged before generation.");
+/**
+ * Prepare audio for each job, then hand the whole group to the runtime. Batching
+ * matters: the model load dominates a single map's cost, so N maps in one
+ * cluster job is far cheaper than N cluster jobs.
+ */
+export async function runJobBatch(jobs: GenerationJob[]) {
+  const store = readStore();
+  const contexts: JobContext[] = [];
+
+  for (const job of jobs) {
+    const track = store.tracks.find((candidate) => candidate.id === job.trackId);
+    if (!track) {
+      setJobState(job.id, {
+        status: "failed",
+        error: "The track for this job is no longer in the library.",
+        finishedAt: new Date().toISOString(),
+      });
+      continue;
+    }
+    try {
+      const audio = await ensureTrackAudio(track, (line) => appendLog(job.id, line), {
+        timeoutMs: Math.max(120_000, job.timeoutSec * 400),
+      });
+      contexts.push({
+        job,
+        track,
+        audioPath: audio.path,
+        appendLog: (line) => appendLog(job.id, line),
+      });
+    } catch (error) {
+      setJobState(job.id, {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+        finishedAt: new Date().toISOString(),
+      });
+    }
   }
 
-  appendLog(job.id, "Starting spotdl download...");
-  const query = track.externalUrl || `spotify:track:${track.providerTrackId}`;
-  await runCommand(
-    "spotdl",
-    ["download", query, "--output", baseDir, "--format", "mp3"],
-    process.cwd(),
-    Math.max(60_000, Math.floor(job.timeoutSec * 0.4 * 1000)),
-    (line) => appendLog(job.id, `[spotdl] ${line}`),
-  );
+  if (contexts.length === 0) return;
 
-  const audioFile = findFirstAudioFile(baseDir);
-  if (!audioFile) {
-    throw new Error("No audio file produced by spotdl.");
+  const runtime = runtimes[contexts[0].job.runtime] ?? localRuntime;
+  try {
+    await runtime.run(contexts);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    for (const ctx of contexts) {
+      const current = readStore().jobs.find((j) => j.id === ctx.job.id);
+      if (current && (current.status === "queued" || current.status === "running")) {
+        setJobState(ctx.job.id, {
+          status: "failed",
+          error: message,
+          finishedAt: new Date().toISOString(),
+        });
+      }
+    }
+    return;
   }
 
-  appendLog(job.id, `Audio ready: ${path.basename(audioFile)}`);
-
-  const mapperDir = path.resolve(process.cwd(), "..", "Mapperatorinator");
-  if (!fs.existsSync(mapperDir)) {
-    throw new Error("Mapperatorinator directory not found at ../Mapperatorinator");
+  // Export whatever finished successfully.
+  const finished = readStore().jobs;
+  for (const ctx of contexts) {
+    const job = finished.find((j) => j.id === ctx.job.id);
+    if (job?.status === "completed") exportArtifacts(job, ctx.track);
   }
+}
 
-  const params = localGeneratorParams(job, track);
-  const hydraOverrides = toHydraOverrides(params);
-
-  appendLog(job.id, "Running Mapperatorinator inference...");
-  await runCommand(
-    "python",
-    [
-      "inference.py",
-      `audio_path=${JSON.stringify(audioFile)}`,
-      `output_path=${JSON.stringify(baseDir)}`,
-      ...hydraOverrides,
-    ],
-    mapperDir,
-    job.timeoutSec * 1000,
-    (line) => appendLog(job.id, `[inference] ${line}`),
-  );
-
-  const artifacts = collectArtifacts(job.id, baseDir);
-  if (artifacts.length === 0) {
-    throw new Error("Inference completed but no downloadable artifacts were found.");
-  }
-
+export async function cancelJob(job: GenerationJob) {
+  await runtimes[job.runtime]?.cancel?.(job);
   setJobState(job.id, {
-    status: "completed",
-    artifacts,
+    status: "failed",
+    error: "Cancelled.",
     finishedAt: new Date().toISOString(),
   });
 }
 
-async function runHostedSubmission(job: GenerationJob, track: Track, awsSession?: AwsRuntimeSession | null) {
-  if (!awsSession) {
-    throw new Error("Hosted AWS runtime requires saved AWS session credentials and infrastructure settings.");
-  }
-
-  appendLog(job.id, "Submitting generation job to AWS Batch...");
-  const submitted = await submitHostedAwsJob(job, track, awsSession);
-  setJobState(job.id, {
-    status: "queued",
-    hosted: {
-      provider: "aws_batch",
-      batchJobId: submitted.batchJobId,
-      region: awsSession.region,
-      queue: awsSession.batchQueue,
-      jobDefinition: awsSession.batchJobDefinition,
-      bucket: awsSession.s3Bucket,
-      prefix: submitted.prefix,
-      logGroup: awsSession.cloudWatchLogGroup || "/aws/batch/job",
-      submittedAt: submitted.submittedAt,
-      lastSyncedAt: submitted.submittedAt,
-    },
-  });
-  appendLog(job.id, `AWS Batch job submitted: ${submitted.batchJobId}`);
-}
-
-async function runJob(jobId: string, awsSession?: AwsRuntimeSession | null) {
-  if (runningJobs.has(jobId)) return;
-  runningJobs.add(jobId);
-
-  const snapshot = readStore();
-  const job = snapshot.jobs.find((j) => j.id === jobId);
-  const track = snapshot.tracks.find((t) => t.id === job?.trackId);
-
-  if (!job || !track) {
-    runningJobs.delete(jobId);
-    return;
-  }
-
-  try {
-    if (job.runtime === "hosted_aws") {
-      await runHostedSubmission(job, track, awsSession);
-      return;
-    }
-
-    setJobState(job.id, { status: "running", startedAt: new Date().toISOString() });
-    await runLocalPipeline(job, track);
-  } catch (error) {
-    setJobState(job.id, {
-      status: "failed",
-      error: error instanceof Error ? error.message : "Unknown job failure",
-      finishedAt: new Date().toISOString(),
-    });
-  } finally {
-    runningJobs.delete(jobId);
-  }
-}
-
-export function createGenerationJob(input: CreateJobInput) {
-  const now = new Date().toISOString();
-
-  const job: GenerationJob = {
-    id: randomUUID(),
-    trackId: input.trackId,
-    runtime: input.runtime,
-    preset: input.preset,
-    generatorParams: input.generatorParams,
-    budgetCapUsd: input.budgetCapUsd,
-    timeoutSec: input.timeoutSec,
-    status: "queued",
-    warning: input.budgetCapUsd > 50 ? "Budget over $50. Confirm this is intentional." : undefined,
-    logs: [],
-    artifacts: [],
-    hosted:
-      input.runtime === "hosted_aws" && input.awsSession
-        ? {
-            provider: "aws_batch",
-            region: input.awsSession.region,
-            queue: input.awsSession.batchQueue,
-            jobDefinition: input.awsSession.batchJobDefinition,
-            bucket: input.awsSession.s3Bucket,
-            prefix: "",
-          }
-        : undefined,
-    createdAt: now,
-  };
-
-  updateStore((store) => {
-    store.jobs.unshift(job);
-  });
-
-  void runJob(job.id, input.awsSession);
-  return job;
+export function getRuntime(id: GenerationJob["runtime"]) {
+  return runtimes[id];
 }

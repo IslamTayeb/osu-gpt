@@ -1,49 +1,29 @@
 import Link from "next/link";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 
-type AuthShellProps = {
-  bootstrapping: boolean;
-};
-
-export function AuthShell({ bootstrapping }: AuthShellProps) {
+export function AuthShell({ bootstrapping }: { bootstrapping: boolean }) {
   return (
-    <main className="auth-shell">
-      <section className="auth-stage">
-        <div className="auth-card">
-          {bootstrapping ? (
-            <div className="list">
-              <Skeleton style={{ height: "10px", width: "44%" }} />
-              <Skeleton style={{ height: "52px", width: "78%" }} />
-              <Skeleton style={{ height: "14px", width: "88%" }} />
-            </div>
-          ) : (
-            <>
-              <p className="auth-kicker">NEOCLASSICAL MACHINE MUSIC INTERFACE</p>
-              <h1 className="auth-title">
-                <span>Liked Songs</span>
-                <span>To Playable Maps</span>
-              </h1>
-              <p className="auth-sub">
-                Bring in your Spotify liked songs, force title+artist substring matching against Ranked/Loved
-                sets, then generate the unmatched tracks in batch.
-              </p>
-            </>
-          )}
+    <main className="center-card">
+      {bootstrapping ? (
+        <div className="section">
+          <Skeleton style={{ height: "12px", width: "40%" }} />
+          <Skeleton style={{ height: "36px", width: "75%" }} />
+          <Skeleton style={{ height: "14px", width: "90%" }} />
         </div>
-        <div className="provider-row">
-          <Link href="/api/auth/spotify/login" className={cn(buttonVariants({ size: "lg" }))}>
+      ) : (
+        <div className="section">
+          <h1 className="section__title">osu-gpt</h1>
+          <p>Turn your Spotify liked songs into playable osu! beatmaps.</p>
+          <p className="muted">
+            Import your library, check for existing Ranked or Loved maps, and generate the rest on
+            the GPU cluster.
+          </p>
+          <Link href="/api/auth/spotify/login" className={buttonVariants()}>
             Connect Spotify
           </Link>
-          <Button variant="secondary" size="lg" disabled>
-            Apple Music Coming Soon
-          </Button>
         </div>
-        <div className="auth-foot tiny muted">
-          Apple Music entry remains visible and ships when backend auth/import is enabled.
-        </div>
-      </section>
+      )}
     </main>
   );
 }

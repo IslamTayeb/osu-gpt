@@ -18,6 +18,7 @@ type SavedTracksResponse = {
       album: { name: string; images?: SpotifyImage[] };
       duration_ms: number;
       external_urls: { spotify: string };
+      external_ids?: { isrc?: string };
     };
   }>;
   next: string | null;
@@ -45,6 +46,7 @@ function asTrack(input: {
   durationMs: number;
   artworkUrl: string;
   externalUrl: string;
+  isrc?: string;
   source: "liked";
   sourceLabel: string;
 }): Track {
@@ -58,15 +60,13 @@ function asTrack(input: {
     durationMs: input.durationMs,
     artworkUrl: input.artworkUrl,
     externalUrl: input.externalUrl,
+    isrc: input.isrc,
     source: input.source,
     sourceLabel: input.sourceLabel,
     importedAt: new Date().toISOString(),
   };
 }
 
-export async function importSpotifyLibrary(accessToken: string): Promise<Track[]> {
-  return importSpotifyLibraryWithProgress(accessToken);
-}
 
 export async function importSpotifyLibraryWithProgress(
   accessToken: string,
@@ -96,6 +96,7 @@ export async function importSpotifyLibraryWithProgress(
           durationMs: t.duration_ms,
           artworkUrl: t.album.images?.[0]?.url ?? "",
           externalUrl: t.external_urls.spotify,
+          isrc: t.external_ids?.isrc,
           source: "liked",
           sourceLabel: "Liked Songs",
         }),
