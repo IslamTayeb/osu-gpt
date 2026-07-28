@@ -14,13 +14,22 @@ npm install
 npm run dev
 ```
 
-You also need, on your PATH: `python`, `spotdl`, `yt-dlp`, `ffmpeg`, `ffprobe`.
+`npm run setup:python` creates `web/.venv` with `spotdl` and `yt-dlp`, and the
+app prefers those over anything on PATH. This is deliberate: a global spotdl
+that shadows a working copy, or breaks on a Python upgrade
+(`ImportError: cannot import name 'formatargspec'` on 3.13+), otherwise
+degrades downloads to a worse yt-dlp search without failing. The job log always
+names which downloader ran.
 
-`spotdl` breaks on Python 3.13+ if it pulled in an old `wrapt`
-(`ImportError: cannot import name 'formatargspec'`). Install it isolated
-instead — `pipx install spotdl` — and make sure no broken copy shadows it on
-PATH. The app falls back to a yt-dlp search when spotdl fails, so a broken
-install degrades quietly rather than erroring; the job log says which was used.
+`ffmpeg` and `ffprobe` are system binaries, not Python packages — install them
+separately (`brew install ffmpeg`). Any tool can be pointed elsewhere with
+`SPOTDL_BIN`, `YT_DLP_BIN`, `FFMPEG_BIN`, `FFPROBE_BIN`.
+
+Running inference on this machine additionally needs Mapperatorinator's own
+dependencies. Keep them in a venv beside that checkout
+(`python -m venv ../Mapperatorinator/.venv && ../Mapperatorinator/.venv/bin/pip
+install -r ../Mapperatorinator/requirements.txt`) and the app will use it, or
+set `MAPPERATORINATOR_PYTHON`. Not needed for the default cluster runtime.
 
 A Mapperatorinator checkout must sit next to this repo (`../Mapperatorinator`)
 or be pointed at with `MAPPERATORINATOR_DIR`. Pin it to the commit in

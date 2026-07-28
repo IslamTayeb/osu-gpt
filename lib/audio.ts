@@ -5,6 +5,18 @@ import { spawn } from "node:child_process";
 import { readStore, resolveAudioCacheDir } from "./store";
 import { Track } from "./types";
 
+/**
+ * Prefer the project-local venv (`npm run setup:python`) over whatever is on
+ * PATH. A globally installed spotdl that shadows a working one — or breaks on a
+ * Python upgrade — otherwise degrades downloads silently.
+ */
+function tool(name: string): string {
+  const override = process.env[`${name.replace(/-/g, "_").toUpperCase()}_BIN`];
+  if (override) return override;
+  const local = path.join(process.cwd(), ".venv", "bin", name);
+  return fs.existsSync(local) ? local : name;
+}
+
 /** How far a downloaded file may differ from the Spotify duration, in ms. */
 const DURATION_TOLERANCE_MS = 10_000;
 
@@ -76,7 +88,7 @@ function run(
 }
 
 export async function probeDurationMs(file: string): Promise<number> {
-  const out = await run("ffprobe", [
+  const out = await run(tool("ffprobe"), [
     "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file,
   ]);
   const seconds = Number.parseFloat(out.trim());
@@ -91,7 +103,7 @@ function parseLoudnormJson(output: string) {
 }
 
 async function measureLoudness(file: string, targetLufs: number) {
-  const output = await run("ffmpeg", [
+  const output = await run(tool("ffmpeg"), [
     "-i", file, "-af", `loudnorm=I=${targetLufs}:TP=-1.5:LRA=11:print_format=json`,
     "-f", "null", "-",
   ]);
@@ -114,7 +126,7 @@ export async function normalizeLoudness(
     `:measured_I=${measured.input_i}:measured_TP=${measured.input_tp}` +
     `:measured_LRA=${measured.input_lra}:measured_thresh=${measured.input_thresh}` +
     `:offset=${measured.target_offset}:linear=true`;
-  await run("ffmpeg", [
+  await run(tool("ffmpeg"), [
     "-y", "-i", source, "-af", filter, "-ar", "44100", "-b:a", "192k", destination,
   ]);
   const verified = await measureLoudness(destination, targetLufs);
@@ -132,7 +144,7 @@ function findAudioFile(dir: string): string | null {
 
 async function downloadWithSpotdl(track: Track, dir: string, timeoutMs: number, log: Log) {
   const query = track.externalUrl || `spotify:track:${track.providerTrackId}`;
-  await run("spotdl", ["download", query, "--output", dir, "--format", "mp3"], {
+  await run(tool("spotdl"), ["download", query, "--output", dir, "--format", "mp3"], {
     timeoutMs,
     onLine: (line) => log(`[spotdl] ${line}`),
   });
@@ -147,7 +159,7 @@ async function downloadWithSpotdl(track: Track, dir: string, timeoutMs: number, 
 async function downloadWithYtdlp(track: Track, dir: string, timeoutMs: number, log: Log) {
   const query = `${track.artists.join(" ")} ${track.title}`.trim();
   const listing = await run(
-    "yt-dlp",
+    tool("yt-dlp"),
     [`ytsearch5:${query}`, "--print", "%(duration)s|%(id)s|%(title)s", "--no-download",
       ...YTDLP_CLIENT_ARGS],
     { timeoutMs, onLine: (line) => log(`[yt-dlp] ${line}`) },
@@ -174,7 +186,7 @@ async function downloadWithYtdlp(track: Track, dir: string, timeoutMs: number, l
   }
   log(`[yt-dlp] matched "${match.title}" (${match.seconds}s)`);
   await run(
-    "yt-dlp",
+    tool("yt-dlp"),
     [`https://www.youtube.com/watch?v=${match.id}`, "-x", "--audio-format", "mp3",
       "--audio-quality", "0", "-o", path.join(dir, "raw.%(ext)s"), ...YTDLP_CLIENT_ARGS],
     { timeoutMs, onLine: (line) => log(`[yt-dlp] ${line}`) },

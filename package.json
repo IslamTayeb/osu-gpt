@@ -12,7 +12,8 @@
     "format:check": "prettier --check .",
     "gen:descriptors": "node scripts/generate-descriptors.mjs",
     "predev": "npm run gen:descriptors",
-    "prebuild": "npm run gen:descriptors"
+    "prebuild": "npm run gen:descriptors",
+    "setup:python": "bash scripts/setup-python.sh"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

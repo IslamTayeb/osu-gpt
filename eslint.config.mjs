@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Project-local Python env: site-packages ships bundled JS we don't own.
+    ".venv/**",
   ]),
 ]);
 

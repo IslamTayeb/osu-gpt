@@ -5,6 +5,13 @@ import { buildGeneratorParams, toHydraOverrides } from "../generatorConfig";
 import { collectArtifacts, setJobState } from "../jobs";
 import { GenerationRuntime, JobContext } from "./types";
 
+/** Local inference needs its own heavier env; see README. */
+function inferencePython() {
+  if (process.env.MAPPERATORINATOR_PYTHON) return process.env.MAPPERATORINATOR_PYTHON;
+  const local = path.join(mapperatorinatorDir(), ".venv", "bin", "python");
+  return fs.existsSync(local) ? local : "python";
+}
+
 function mapperatorinatorDir() {
   return process.env.MAPPERATORINATOR_DIR
     ? path.resolve(process.env.MAPPERATORINATOR_DIR)
@@ -12,13 +19,14 @@ function mapperatorinatorDir() {
 }
 
 function runInference(
+  pythonBin: string,
   args: string[],
   cwd: string,
   timeoutMs: number,
   onLine: (line: string) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("python", args, { cwd });
+    const child = spawn(pythonBin, args, { cwd });
     let tail = "";
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
@@ -77,7 +85,13 @@ export const localRuntime: GenerationRuntime = {
       ctx.appendLog(`Running: python ${args.join(" ")}`);
 
       try {
-        await runInference(args, mapperatorinatorDir(), ctx.job.timeoutSec * 1000, ctx.appendLog);
+        await runInference(
+          inferencePython(),
+          args,
+          mapperatorinatorDir(),
+          ctx.job.timeoutSec * 1000,
+          ctx.appendLog,
+        );
         const artifacts = collectArtifacts(ctx.job.id, outputDir);
         if (artifacts.length === 0) {
           throw new Error("Inference finished but produced no beatmap.");
