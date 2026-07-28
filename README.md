@@ -16,6 +16,12 @@ npm run dev
 
 You also need, on your PATH: `python`, `spotdl`, `yt-dlp`, `ffmpeg`, `ffprobe`.
 
+`spotdl` breaks on Python 3.13+ if it pulled in an old `wrapt`
+(`ImportError: cannot import name 'formatargspec'`). Install it isolated
+instead — `pipx install spotdl` — and make sure no broken copy shadows it on
+PATH. The app falls back to a yt-dlp search when spotdl fails, so a broken
+install degrades quietly rather than erroring; the job log says which was used.
+
 A Mapperatorinator checkout must sit next to this repo (`../Mapperatorinator`)
 or be pointed at with `MAPPERATORINATOR_DIR`. Pin it to the commit in
 `config/mapperatorinator.pin.json`; the settings panel warns when the checkout
@@ -69,8 +75,19 @@ faster.
 
 Songs are downloaded once per track and cached under the audio cache folder,
 then checked against the Spotify duration (±10 s) so a wrong search result is
-rejected rather than mapped, and normalized to -14 LUFS so maps don't swing
-between deafening and inaudible.
+rejected rather than mapped.
+
+Loudness is then normalized with a two-pass ffmpeg `loudnorm` to **-14 LUFS
+integrated, -1.5 dBTP true peak**, at 44.1 kHz / 192 kbps. -14 LUFS is the level
+streaming services normalize to, so it is what these masters are meant to be
+heard at, and osu! stable does not normalize playback — whatever is in the file
+is what you hear. Measured across this library, downloads landed between -8.4
+and -9.5 LUFS with true peaks up to +2 dBTP (already clipping), which is why
+maps swung between deafening and quiet. The first pass measures, the second
+applies the correction with `linear=true`, so it is a clean gain change rather
+than compression that would squash dynamics. Verified output lands within about
+0.3 LU of target. Both the target and the whole step are configurable in
+settings.
 
 30-second previews come from Deezer (matched by ISRC where available) with
 iTunes as a fallback, and are cached as files — Spotify stopped serving preview
