@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { FALLBACK_TARGET, GPU_PREFERENCE, loadPin, parseGpuAvail, Pin } from "./dccConfig";
+import { FALLBACK_TARGET, loadPin, parseGpuAvail, Pin } from "./dccConfig";
+import { DEFAULT_GPU_PROFILE, GPU_PROFILES, GpuProfileId } from "./gpuProfiles";
 import { buildGeneratorParams } from "../generatorConfig";
 
 import { collectArtifacts, setJobState } from "../jobs";
@@ -12,7 +13,8 @@ import { GenerationRuntime, JobContext } from "./types";
 /** Above this many pending jobs, a partition's "free" GPU is likely already claimed. */
 const QUEUE_CONGESTED = 25;
 
-async function pickTarget(host: string, log: (line: string) => void) {
+async function pickTarget(host: string, profileId: GpuProfileId, log: (line: string) => void) {
+  const profile = GPU_PROFILES[profileId] ?? GPU_PROFILES[DEFAULT_GPU_PROFILE];
   try {
     const output = await ssh(
       host,
@@ -41,8 +43,10 @@ async function pickTarget(host: string, log: (line: string) => void) {
     const free = (candidate: { partition: string; gres: string }) =>
       (byPartition[candidate.partition]?.get(candidate.gres) ?? 0) > 0;
     const chosen =
-      GPU_PREFERENCE.find((c) => free(c) && pending[c.partition] <= QUEUE_CONGESTED) ??
-      GPU_PREFERENCE.find(free);
+      profile.targets.find((c) => free(c) && pending[c.partition] <= QUEUE_CONGESTED) ??
+      profile.targets.find(free) ??
+      // Nothing in the preferred class is free; a 2080 beats waiting.
+      [FALLBACK_TARGET].find(free);
 
     if (chosen) {
       log(
@@ -190,7 +194,7 @@ export const dccRuntime: GenerationRuntime = {
     const remoteDir = `${pin.dcc.workDir}/jobs/${batchId}`;
     const log = (line: string) => contexts.forEach((ctx) => ctx.appendLog(line));
 
-    const target = await pickTarget(host, log);
+    const target = await pickTarget(host, readStore().settings.gpuProfile, log);
     await ssh(host, `mkdir -p ${shq(`${remoteDir}/audio`)} ${shq(`${remoteDir}/out`)}`);
 
     // Stage audio under the job id so the manifest paths are predictable.

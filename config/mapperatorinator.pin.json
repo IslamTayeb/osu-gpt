@@ -1,9 +1,9 @@
 {
   "repo": "https://github.com/IslamTayeb/Mapperatorinator.git",
-  "branch": "osu-gpt/batch-driver",
-  "sha": "d43d8ea7",
+  "branch": "main",
+  "sha": "4c0b573e",
   "upstreamBase": "2a70eb89",
-  "notes": "Branch is clean upstream main plus the osu-gpt batch driver and the CUDA-graph capture fixes. Rebase onto upstream main to pick up new releases.",
+  "notes": "Fork main is pristine OliBomby upstream plus exactly two additive commits: the osu-gpt batch driver, and the SDPA selection fix the fast decode path needs. To take a new upstream release, reset main to upstream and replay those two.",
   "dcc": {
     "sshHost": "dcc",
     "account": "GROUP",

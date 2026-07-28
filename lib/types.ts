@@ -134,6 +134,10 @@ export type TrackMatchSnapshot = {
 
 export type AppSettings = {
   runtime: RuntimeType;
+  /** Which cluster GPU class to aim for; see lib/runtime/gpuProfiles.ts. */
+  gpuProfile: "fast-start" | "bf16" | "auto";
+  /** Hand finished maps straight to osu! (lazer imports .osz on open). */
+  openInOsu: boolean;
   /** Where downloaded + normalized full songs are cached. */
   audioCacheDir: string;
   /** Generated .osz files are copied here when set (e.g. the osu! Songs folder). */

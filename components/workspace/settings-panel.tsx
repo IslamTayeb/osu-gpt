@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatDuration } from "@/lib/runtime/gpuProfiles";
 import { AppSettings, RuntimeType } from "@/lib/types";
 
-type DccStatus = {
-  reachable: boolean;
-  detail?: string;
-  freeGpus: { partition: string; type: string; count: number }[];
-  pin: { expected: string; localActual?: string; clusterActual?: string; drift: boolean };
+type ProfileEstimate = {
+  id: AppSettings["gpuProfile"];
+  label: string;
+  note: string;
+  freeNow: number;
+  expectedWaitSec: number;
+  p90WaitSec: number;
 };
 
 type Props = {
@@ -20,23 +23,35 @@ type Props = {
 
 export function SettingsPanel({ settings, onSave, firstRun }: Props) {
   const [draft, setDraft] = useState(settings);
-  const [status, setStatus] = useState<DccStatus | null>(null);
-  const [checking, setChecking] = useState(false);
+  const [estimates, setEstimates] = useState<ProfileEstimate[] | null>(null);
+  const [osu, setOsu] = useState<{ installed: boolean; detail: string } | null>(null);
+  const [loadingEstimates, setLoadingEstimates] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => setDraft(settings), [settings]);
+  useEffect(() => {
+    fetch("/api/osu/detect")
+      .then((r) => r.json())
+      .then(setOsu)
+      .catch(() => setOsu(null));
+  }, []);
 
-  const checkCluster = async () => {
-    setChecking(true);
+  // Ask the cluster what the wait actually looks like, on demand.
+  const refreshEstimates = useCallback(async (fresh = false) => {
+    setLoadingEstimates(true);
     try {
-      const response = await fetch("/api/runtime/dcc/status");
-      setStatus(await response.json());
+      const response = await fetch(`/api/runtime/dcc/estimate${fresh ? "?fresh=1" : ""}`);
+      const data = (await response.json()) as { profiles?: ProfileEstimate[] };
+      setEstimates(data.profiles ?? null);
     } catch {
-      setStatus({ reachable: false, detail: "Status request failed.", freeGpus: [], pin: { expected: "", drift: false } });
+      setEstimates(null);
     } finally {
-      setChecking(false);
+      setLoadingEstimates(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (draft.runtime === "dcc") void refreshEstimates();
+  }, [draft.runtime, refreshEstimates]);
 
   const save = async (extra: Partial<AppSettings> = {}) => {
     setSaving(true);
@@ -47,99 +62,115 @@ export function SettingsPanel({ settings, onSave, firstRun }: Props) {
     }
   };
 
+  const current = estimates?.find((e) => e.id === draft.gpuProfile);
+
   return (
     <section className="section">
       <h2 className="section__title">{firstRun ? "Setup" : "Settings"}</h2>
 
       <label className="field">
-        <span className="field__label">Where maps are generated</span>
+        <span className="field__label">Generate on</span>
         <select
           className="ui-select"
           value={draft.runtime}
           onChange={(event) => setDraft({ ...draft, runtime: event.target.value as RuntimeType })}
         >
-          <option value="dcc">Duke compute cluster (recommended)</option>
+          <option value="dcc">Duke compute cluster</option>
           <option value="local">This machine</option>
         </select>
       </label>
 
       {draft.runtime === "dcc" ? (
-        <div className="cluster-status">
-          <Button variant="secondary" onClick={checkCluster} disabled={checking}>
-            {checking ? "Checking..." : "Test cluster connection"}
-          </Button>
-          {status ? (
-            status.reachable ? (
-              <div>
-                <p className="ok">Connected.</p>
-                <p className="muted">
-                  {status.freeGpus.length > 0
-                    ? `Free now: ${status.freeGpus
-                        .map((gpu) => `${gpu.count}× ${gpu.type} (${gpu.partition})`)
-                        .join(", ")}`
-                    : "No GPUs free right now — jobs will queue."}
-                </p>
-                {status.pin.drift ? (
-                  <p className="warn">
-                    Mapperatorinator checkout differs from the pinned commit{" "}
-                    {status.pin.expected} (local {status.pin.localActual ?? "?"}, cluster{" "}
-                    {status.pin.clusterActual ?? "?"}).
-                  </p>
-                ) : null}
-              </div>
-            ) : (
-              <p className="warn">{status.detail}</p>
-            )
-          ) : null}
-        </div>
+        <label className="field">
+          <span className="field__label">GPU</span>
+          <select
+            className="ui-select"
+            value={draft.gpuProfile}
+            onFocus={() => refreshEstimates(true)}
+            onChange={(event) =>
+              setDraft({ ...draft, gpuProfile: event.target.value as AppSettings["gpuProfile"] })
+            }
+          >
+            {(estimates ?? []).map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.label} — starts in ~{formatDuration(profile.expectedWaitSec)}
+                {profile.freeNow > 0 ? ` (${profile.freeNow} free)` : " (none free)"}
+              </option>
+            ))}
+            {!estimates ? <option value={draft.gpuProfile}>Checking the cluster…</option> : null}
+          </select>
+          <span className="field__hint">
+            {loadingEstimates ? "Checking live availability…" : current?.note}
+            {current && current.p90WaitSec > 120
+              ? ` Worst case seen: ${formatDuration(current.p90WaitSec)}.`
+              : ""}
+          </span>
+        </label>
       ) : null}
 
-      <label className="field">
-        <span className="field__label">Export folder</span>
-        <Input
-          value={draft.exportDir ?? ""}
-          placeholder="Leave empty to download from the browser only"
-          onChange={(event) => setDraft({ ...draft, exportDir: event.target.value || null })}
-        />
-        <span className="field__hint">
-          Finished .osz files are copied here — point it at your osu! Songs folder.
-        </span>
-      </label>
+      {osu ? (
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.openInOsu && osu.installed}
+            disabled={!osu.installed}
+            onChange={(event) => setDraft({ ...draft, openInOsu: event.target.checked })}
+          />
+          <span>Open finished maps in osu!</span>
+        </label>
+      ) : null}
+      {osu && !osu.installed ? <p className="field__hint">{osu.detail}</p> : null}
 
-      <label className="field">
-        <span className="field__label">Audio cache folder</span>
-        <Input
-          value={draft.audioCacheDir}
-          onChange={(event) => setDraft({ ...draft, audioCacheDir: event.target.value })}
-        />
-        <span className="field__hint">
-          Holds downloaded songs and 30-second previews so they are fetched once.
-        </span>
-      </label>
+      <details className="advanced">
+        <summary>Advanced settings</summary>
+        <div className="advanced__body">
+          <label className="field">
+            <span className="field__label">Also save .osz to a folder</span>
+            <Input
+              value={draft.exportDir ?? ""}
+              placeholder="Optional — downloads work without this"
+              onChange={(event) => setDraft({ ...draft, exportDir: event.target.value || null })}
+            />
+          </label>
 
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={draft.loudnormEnabled}
-          onChange={(event) => setDraft({ ...draft, loudnormEnabled: event.target.checked })}
-        />
-        <span>Normalize loudness to {draft.loudnormTargetLufs} LUFS</span>
-      </label>
+          <label className="field">
+            <span className="field__label">Audio cache folder</span>
+            <Input
+              value={draft.audioCacheDir}
+              onChange={(event) => setDraft({ ...draft, audioCacheDir: event.target.value })}
+            />
+            <span className="field__hint">Downloaded songs and previews, fetched once.</span>
+          </label>
 
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={draft.prefetchPreviews}
-          onChange={(event) => setDraft({ ...draft, prefetchPreviews: event.target.checked })}
-        />
-        <span>Pre-fetch previews for the whole library</span>
-      </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={draft.loudnormEnabled}
+              onChange={(event) => setDraft({ ...draft, loudnormEnabled: event.target.checked })}
+            />
+            <span>Normalize loudness to {draft.loudnormTargetLufs} LUFS</span>
+          </label>
+
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={draft.prefetchPreviews}
+              onChange={(event) => setDraft({ ...draft, prefetchPreviews: event.target.checked })}
+            />
+            <span>Pre-fetch previews for the whole library</span>
+          </label>
+
+          <Button variant="ghost" onClick={() => refreshEstimates(true)}>
+            Re-check cluster
+          </Button>
+        </div>
+      </details>
 
       <Button
         onClick={() => save(firstRun ? { setupCompletedAt: new Date().toISOString() } : {})}
         disabled={saving}
       >
-        {saving ? "Saving..." : firstRun ? "Get started" : "Save settings"}
+        {saving ? "Saving…" : firstRun ? "Get started" : "Save settings"}
       </Button>
     </section>
   );

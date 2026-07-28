@@ -39,10 +39,23 @@ drifts from it.
 ## Where maps are generated
 
 **Duke compute cluster (default).** Jobs are submitted over `ssh dcc` as Slurm
-batches. Before submitting, the app asks `gpuavail` which GPUs are free and
-takes the best bf16-capable card it can get right now — otherwise it goes
-straight to a 2080 rather than waiting, since the queue for the good cards runs
-from seconds to a couple of hours depending on the time of day.
+batches. Pick a GPU class in settings; the dropdown queries the cluster live
+(free GPU counts plus Slurm's own `sbatch --test-only` prediction) so the wait
+shown is real, not assumed.
+
+Measured over 977 of our jobs in 30 days:
+
+| GPU | median wait | p90 | per 3-min song |
+| --- | --- | --- | --- |
+| RTX 2080 Ti (default) | 12 s | 31 s | ~3.5 min |
+| A5000 / A6000 (bf16) | 19 s | 23 min | ~1 min |
+| RTX 5000 Ada | 14 hours | — | — |
+
+The 2080 is the default because it is nearly always idle, and starting now beats
+waiting for a faster card. For a large batch the maths flips — 100 songs is
+about 5 hours on a 2080 against 1¼ hours on bf16 — so switch when queueing a lot.
+5000 Ada is excluded from automatic selection entirely: it is the best card on
+paper and the worst in practice.
 
 Cluster paths live in `config/mapperatorinator.pin.json`. One-time setup:
 

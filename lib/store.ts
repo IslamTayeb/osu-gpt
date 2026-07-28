@@ -8,6 +8,10 @@ const dbPath = path.join(dataDir, "store.json");
 
 export const defaultSettings: AppSettings = {
   runtime: "dcc",
+  // 2080s start in ~12s median against ~19s (p90 ~23min) for bf16 cards, so the
+  // slower GPU is usually the faster answer.
+  gpuProfile: "fast-start",
+  openInOsu: true,
   audioCacheDir: path.join(dataDir, "cache"),
   exportDir: null,
   loudnormEnabled: true,

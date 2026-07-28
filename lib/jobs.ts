@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureTrackAudio } from "./audio";
@@ -52,9 +53,33 @@ export function collectArtifacts(jobId: string, dir: string): Artifact[] {
     });
 }
 
-/** Copy finished beatmaps into the user's export folder, when one is configured. */
+/**
+ * osu!lazer has no Songs folder — it imports an .osz when the file is opened.
+ * So rather than asking for a path, hand the file to the app directly.
+ */
+function importIntoOsu(oszPath: string, jobId: string) {
+  if (process.platform !== "darwin") return;
+  try {
+    execFileSync("open", ["-a", "osu!", oszPath], { timeout: 20_000 });
+    appendLog(jobId, "Sent to osu! for import.");
+  } catch (error) {
+    appendLog(jobId, `Could not open in osu!: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+/** Copy finished beatmaps into the user's export folder and/or hand them to osu!. */
 export function exportArtifacts(job: GenerationJob, track: Track) {
-  const exportDir = readStore().settings.exportDir;
+  const settings = readStore().settings;
+  const exportDir = settings.exportDir;
+
+  if (settings.openInOsu) {
+    for (const artifact of job.artifacts) {
+      if (path.extname(artifact.fileName).toLowerCase() === ".osz" && artifact.relativePath) {
+        importIntoOsu(path.resolve(process.cwd(), artifact.relativePath), job.id);
+      }
+    }
+  }
+
   if (!exportDir) return;
   try {
     fs.mkdirSync(exportDir, { recursive: true });

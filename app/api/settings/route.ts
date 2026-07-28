@@ -11,6 +11,8 @@ export async function GET() {
 
 const WRITABLE_KEYS: (keyof AppSettings)[] = [
   "runtime",
+  "gpuProfile",
+  "openInOsu",
   "audioCacheDir",
   "exportDir",
   "loudnormEnabled",

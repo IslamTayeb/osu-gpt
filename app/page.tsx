@@ -10,6 +10,7 @@ import { JobsPane } from "@/components/workspace/jobs-pane";
 import { LibraryPane } from "@/components/workspace/library-pane";
 import { SettingsPanel } from "@/components/workspace/settings-panel";
 import { importProgress } from "@/lib/homeUi";
+import { GPU_PROFILES, estimateSeconds, formatDuration } from "@/lib/runtime/gpuProfiles";
 import type {
   AppSettings,
   GenerationJob,
@@ -59,6 +60,7 @@ export default function Home() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [waitSecByProfile, setWaitSecByProfile] = useState<Record<string, number>>({});
 
   // Session + settings bootstrap
   useEffect(() => {
@@ -134,6 +136,22 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!spotifyConnected || settings?.runtime !== "dcc") return;
+    const load = () =>
+      fetch("/api/runtime/dcc/estimate")
+        .then((r) => r.json())
+        .then((d: { profiles?: { id: string; expectedWaitSec: number }[] }) =>
+          setWaitSecByProfile(
+            Object.fromEntries((d.profiles ?? []).map((p) => [p.id, p.expectedWaitSec])),
+          ),
+        )
+        .catch(() => {});
+    void load();
+    const timer = setInterval(load, 60_000);
+    return () => clearInterval(timer);
+  }, [spotifyConnected, settings?.runtime]);
+
+  useEffect(() => {
     if (!spotifyConnected) return;
     void loadJobs();
     const timer = setInterval(loadJobs, 2500);
@@ -148,6 +166,49 @@ export default function Home() {
     () => new Set(jobs.filter((job) => job.status === "completed").map((job) => job.trackId)),
     [jobs],
   );
+
+  const selectionEstimate = useMemo(() => {
+    if (!settings) return null;
+    const profile =
+      settings.runtime === "dcc"
+        ? (GPU_PROFILES[settings.gpuProfile] ?? GPU_PROFILES["fast-start"])
+        : GPU_PROFILES["fast-start"];
+    const batchSize = settings.runtime === "dcc" ? 8 : 1;
+
+    const durationOf = (trackId: string) => tracksById[trackId]?.durationMs;
+    const knownDurations = [...selectedTrackIds].map(durationOf).filter(Boolean) as number[];
+    // Selections can span pages we have not loaded; fall back to the average.
+    const average =
+      knownDurations.length > 0
+        ? knownDurations.reduce((sum, ms) => sum + ms, 0) / knownDurations.length
+        : 210_000;
+    const fill = (count: number) => Array.from({ length: Math.max(0, count) }, () => average);
+    const selected = [...knownDurations, ...fill(selectedTrackIds.size - knownDurations.length)];
+
+    // Anything already queued or running has to clear before this batch starts,
+    // because the runtime drains one batch at a time.
+    const backlogJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
+    const backlog = backlogJobs.map((job) => durationOf(job.trackId) ?? average);
+
+    if (selected.length === 0 && backlog.length === 0) return null;
+
+    const queueWait = waitSecByProfile[profile.id] ?? profile.medianWaitSec;
+    const backlogSec = backlog.length
+      ? estimateSeconds(profile, backlog, batchSize).typical + queueWait
+      : 0;
+    const selectionSec = selected.length
+      ? estimateSeconds(profile, selected, batchSize).typical + (backlog.length ? 0 : queueWait)
+      : 0;
+
+    const where = settings.runtime === "dcc" ? "" : " on this machine";
+    if (selected.length === 0) {
+      return `${backlogJobs.length} in flight, ~${formatDuration(backlogSec)} left${where}`;
+    }
+    const total = formatDuration(backlogSec + selectionSec);
+    return backlog.length > 0
+      ? `~${total}${where} (behind ${backlogJobs.length} already queued)`
+      : `~${total}${where}`;
+  }, [settings, selectedTrackIds, tracksById, jobs, waitSecByProfile]);
 
   const toggleTrack = useCallback(
     (trackId: string, shiftKey: boolean) => {
@@ -410,7 +471,10 @@ export default function Home() {
 
         <main className="pane">
           <div className="pane__header">
-            <h2 className="section__title">Library — {selectedTrackIds.size} selected</h2>
+            <h2 className="section__title">
+              Library — {selectedTrackIds.size} selected
+              {selectionEstimate ? <span className="muted"> · {selectionEstimate}</span> : null}
+            </h2>
           </div>
           <LibraryPane
             tracks={tracks}
