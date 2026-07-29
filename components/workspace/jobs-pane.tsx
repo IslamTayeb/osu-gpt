@@ -78,7 +78,10 @@ export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }
               <span style={{ flex: 1, minWidth: 0 }}>
                 {job.trackLabel ?? (track ? `${track.artists.join(", ")} — ${track.title}` : job.trackId)}
               </span>
-              <span className="job__elapsed">{formatElapsed(span.end - span.start)}</span>
+              {/* In a batch the songs share one process; only the batch header times it. */}
+              {!grouped ? (
+                <span className="job__elapsed">{formatElapsed(span.end - span.start)}</span>
+              ) : null}
               <span className="ui-badge">{job.modelVersion}</span>
             </div>
 
