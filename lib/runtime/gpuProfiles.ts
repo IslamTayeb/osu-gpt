@@ -115,22 +115,6 @@ export function estimateSeconds(
   return Math.round(compute + waitSec * batches);
 }
 
-/**
- * All-in seconds spent per minute of audio, startup amortised across whatever
- * else is in the batch. Always above `secPerAudioMinute`, and approaches it as
- * the batch fills up: on a 2080 one 3-minute song costs ~53s per audio-minute,
- * where eight of them cost ~32s.
- */
-export function secondsPerAudioMinute(
-  profile: GpuProfile,
-  audioDurationsMs: number[],
-  batchSize = 8,
-): number {
-  const totalMinutes = audioDurationsMs.reduce((sum, ms) => sum + ms / 60_000, 0);
-  if (totalMinutes <= 0) return 0;
-  return estimateSeconds(profile, audioDurationsMs, batchSize, 0) / totalMinutes;
-}
-
 /** Slurm walltime limits, in seconds. The ceiling is what these partitions take. */
 const MIN_WALLTIME_SEC = 900;
 const MAX_WALLTIME_SEC = 2700;

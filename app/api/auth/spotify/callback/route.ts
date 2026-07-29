@@ -9,17 +9,27 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
 
+  // Redirect targets must stay on the host the browser is actually on: in dev
+  // request.url reports the bind host (localhost), and sending the browser
+  // there would strand it on an origin that never got the session cookie.
+  const home = (params: Record<string, string>) => {
+    const target = new URL("/", request.url);
+    const host = request.headers.get("host");
+    if (host) target.host = host;
+    for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
+    return target;
+  };
+
   const rawStateCookie = request.cookies.get(STATE_COOKIE)?.value;
   const cookieState = decodeSignedPayload<{ state: string }>(rawStateCookie);
 
   if (!code || !state || !cookieState || cookieState.state !== state) {
-    return NextResponse.redirect(new URL("/?error=spotify_oauth", request.url));
+    return NextResponse.redirect(home({ error: "spotify_oauth" }));
   }
 
   try {
     const token = await exchangeCodeForToken(code);
-    const target = new URL("/", request.url);
-    target.searchParams.set("spotify", "connected");
+    const target = home({ spotify: "connected" });
     const response = NextResponse.redirect(target);
 
     response.cookies.set({
@@ -35,6 +45,6 @@ export async function GET(request: NextRequest) {
     response.cookies.delete(STATE_COOKIE);
     return response;
   } catch {
-    return NextResponse.redirect(new URL("/?error=spotify_token", request.url));
+    return NextResponse.redirect(home({ error: "spotify_token" }));
   }
 }
