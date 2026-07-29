@@ -193,7 +193,6 @@ export default function Home() {
         const saved = data.tracks?.[0] ?? track;
         setSelectedTrackIds((current) => new Set(current).add(saved.id));
         setLibraryTotal((current) => current + 1);
-        toast.success(`Added ${saved.title}.`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not add the track.");
       } finally {
@@ -337,7 +336,6 @@ export default function Home() {
       return;
     }
     setSettings(data.settings);
-    toast.success("Settings saved.");
   }, []);
 
   const acknowledgeSpotdl = useCallback(async () => {
@@ -349,7 +347,6 @@ export default function Home() {
     async (input: {
       generatorParams: GeneratorParams;
       modelVersion: ModelVersion;
-      experimentalCompile: boolean;
     }) => {
       if (selectedTrackIds.size === 0) return;
       setBusy(true);
@@ -364,7 +361,6 @@ export default function Home() {
           toast.error(data.error ?? "Could not queue generation.");
           return;
         }
-        toast.success(`Queued ${data.jobs?.length ?? 0} map(s).`);
         void loadJobs();
       } finally {
         setBusy(false);
@@ -377,7 +373,6 @@ export default function Home() {
     setBusy(true);
     try {
       await fetch("/api/library/spotify/import", { method: "POST" });
-      toast.success("Import started.");
     } finally {
       setBusy(false);
     }

@@ -112,7 +112,6 @@ export function createGenerationJob(input: {
   modelVersion: ModelVersion;
   runtime: GenerationJob["runtime"];
   timeoutSec: number;
-  experimentalCompile?: boolean;
 }): GenerationJob {
   const job: GenerationJob = {
     id: crypto.randomUUID(),
@@ -121,7 +120,6 @@ export function createGenerationJob(input: {
     runtime: input.runtime,
     modelVersion: input.modelVersion,
     generatorParams: input.generatorParams,
-    experimentalCompile: input.experimentalCompile,
     timeoutSec: input.timeoutSec,
     status: "queued",
     artifacts: [],

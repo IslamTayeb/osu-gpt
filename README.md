@@ -100,11 +100,12 @@ Songs are downloaded once per track and cached under the audio cache folder,
 then checked against the Spotify duration (±10 s) so a wrong search result is
 rejected rather than mapped.
 
-Loudness is then normalized with a two-pass ffmpeg `loudnorm` to **-14 LUFS
-integrated, -1.5 dBTP true peak**, at 44.1 kHz / 192 kbps. -14 LUFS is the level
-streaming services normalize to, so it is what these masters are meant to be
-heard at, and osu! stable does not normalize playback — whatever is in the file
-is what you hear. Measured across this library, downloads landed between -8.4
+Loudness is then normalized with a two-pass ffmpeg `loudnorm` to **-9 LUFS
+integrated, -1.5 dBTP true peak**, at 44.1 kHz / 192 kbps. -9 matches what
+typical osu! maps actually ship (raw commercial masters), so generated maps sit
+at the same volume as the rest of a library — an earlier -14 target made every
+generated map noticeably quieter than its neighbours. Measured across this
+library, downloads landed between -8.4
 and -9.5 LUFS with true peaks up to +2 dBTP (already clipping), which is why
 maps swung between deafening and quiet. The first pass measures, the second
 applies the correction with `linear=true`, so it is a clean gain change rather

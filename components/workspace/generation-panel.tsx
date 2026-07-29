@@ -23,7 +23,6 @@ type Props = {
   onGenerate: (input: {
     generatorParams: GeneratorParams;
     modelVersion: ModelVersion;
-    experimentalCompile: boolean;
   }) => void;
 };
 
@@ -47,7 +46,6 @@ export function GenerationPanel({ settings, selectedCount, busy, onGenerate }: P
   });
   const [pinned, setPinned] = useState<Set<DerivedDifficultyKey>>(new Set());
   const [modelVersion, setModelVersion] = useState<ModelVersion>(settings.modelVersion);
-  const [experimentalCompile, setExperimentalCompile] = useState(settings.experimentalCompile);
 
   const set = <K extends keyof GeneratorParams>(key: K, value: GeneratorParams[K]) =>
     setParams((prev) => ({ ...prev, [key]: value }));
@@ -208,19 +206,11 @@ export function GenerationPanel({ settings, selectedCount, busy, onGenerate }: P
             />
             <span>Super timing (slower, more accurate BPM)</span>
           </label>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={experimentalCompile}
-              onChange={(event) => setExperimentalCompile(event.target.checked)}
-            />
-            <span>Experimental compiled decode (cluster only, unverified)</span>
-          </label>
         </div>
       </details>
 
       <Button
-        onClick={() => onGenerate({ generatorParams: params, modelVersion, experimentalCompile })}
+        onClick={() => onGenerate({ generatorParams: params, modelVersion })}
         disabled={busy || selectedCount === 0}
       >
         {busy

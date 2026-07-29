@@ -15,9 +15,8 @@ export const defaultSettings: AppSettings = {
   audioCacheDir: path.join(dataDir, "cache"),
   exportDir: null,
   loudnormEnabled: true,
-  loudnormTargetLufs: -14,
+  loudnormTargetLufs: -9,
   modelVersion: "v32",
-  experimentalCompile: false,
 };
 
 const defaultStore: AppStore = {

@@ -31,7 +31,6 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ i
     modelVersion: original.modelVersion,
     runtime: original.runtime,
     timeoutSec: original.timeoutSec,
-    experimentalCompile: original.experimentalCompile,
   });
   enqueueJobs([retried]);
   return NextResponse.json({ job: retried }, { status: 201 });

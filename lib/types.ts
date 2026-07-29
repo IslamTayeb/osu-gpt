@@ -88,7 +88,6 @@ export type GenerationJob = {
   runtime: RuntimeType;
   modelVersion: ModelVersion;
   generatorParams: GeneratorParams;
-  experimentalCompile?: boolean;
   timeoutSec: number;
   status: "queued" | "running" | "completed" | "failed";
   warning?: string;
@@ -123,7 +122,6 @@ export type AppSettings = {
   loudnormEnabled: boolean;
   loudnormTargetLufs: number;
   modelVersion: ModelVersion;
-  experimentalCompile: boolean;
   /** Last-used advanced generation params, restored on load. */
   generationDefaults?: GeneratorParams;
   setupCompletedAt?: string;

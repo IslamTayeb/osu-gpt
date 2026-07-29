@@ -18,7 +18,6 @@ const WRITABLE_KEYS: (keyof AppSettings)[] = [
   "loudnormEnabled",
   "loudnormTargetLufs",
   "modelVersion",
-  "experimentalCompile",
   "generationDefaults",
   "setupCompletedAt",
 ];

@@ -211,8 +211,23 @@ export async function ensureTrackAudio(
 
   if (fs.existsSync(audioPath) && fs.existsSync(sidecarPath)) {
     const sidecar = JSON.parse(fs.readFileSync(sidecarPath, "utf8")) as Sidecar;
-    log(`Audio cache hit (${path.basename(audioPath)}).`);
-    return { ...sidecar, path: audioPath, source: "cache" };
+    // A cached file normalized to an old target would keep every future map at
+    // the wrong loudness; treat it as stale and re-fetch at the current target.
+    const cachedLoudness = sidecar.loudnessAfter;
+    const stale =
+      settings.loudnormEnabled &&
+      typeof cachedLoudness === "number" &&
+      Math.abs(cachedLoudness - settings.loudnormTargetLufs) > 1;
+    if (!stale) {
+      log(`Audio cache hit (${path.basename(audioPath)}).`);
+      return { ...sidecar, path: audioPath, source: "cache" };
+    }
+    log(
+      `Cached audio is ${cachedLoudness} LUFS but the target is now ` +
+        `${settings.loudnormTargetLufs}; re-fetching.`,
+    );
+    fs.rmSync(audioPath, { force: true });
+    fs.rmSync(sidecarPath, { force: true });
   }
 
   const timeoutMs = options.timeoutMs ?? 300_000;

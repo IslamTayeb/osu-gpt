@@ -23,7 +23,6 @@ export async function POST(request: NextRequest) {
     allTracks?: boolean;
     runtime?: RuntimeType;
     modelVersion?: ModelVersion;
-    experimentalCompile?: boolean;
     timeoutSec?: number;
     generatorParams?: GeneratorParams;
   };
@@ -79,7 +78,6 @@ export async function POST(request: NextRequest) {
       modelVersion,
       runtime: runtimeId,
       timeoutSec,
-      experimentalCompile: body.experimentalCompile ?? store.settings.experimentalCompile,
     }),
   );
 
