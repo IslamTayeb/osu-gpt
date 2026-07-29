@@ -200,10 +200,31 @@ type Log = (line: string) => void;
  * Get a normalized, duration-verified audio file for a track, downloading only
  * when the cache misses. Both runtimes share this so a song is fetched once.
  */
-export async function ensureTrackAudio(
+/**
+ * One download per track at a time: a preview click racing a generation batch
+ * must share the fetch, not corrupt the cache with two writers.
+ */
+const inFlight = new Map<string, Promise<CachedAudio>>();
+
+export function ensureTrackAudio(
   track: Track,
   log: Log,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; allowStale?: boolean } = {},
+): Promise<CachedAudio> {
+  const existing = inFlight.get(track.id);
+  if (existing) {
+    log("Audio fetch already in progress for this track; waiting on it.");
+    return existing;
+  }
+  const promise = fetchTrackAudio(track, log, options).finally(() => inFlight.delete(track.id));
+  inFlight.set(track.id, promise);
+  return promise;
+}
+
+async function fetchTrackAudio(
+  track: Track,
+  log: Log,
+  options: { timeoutMs?: number; allowStale?: boolean } = {},
 ): Promise<CachedAudio> {
   const settings = readStore().settings;
   const { dir, audioPath, sidecarPath } = audioCachePaths(track);
@@ -213,12 +234,14 @@ export async function ensureTrackAudio(
     const sidecar = JSON.parse(fs.readFileSync(sidecarPath, "utf8")) as Sidecar;
     // A cached file normalized to an old target would keep every future map at
     // the wrong loudness; treat it as stale and re-fetch at the current target.
+    // Previews pass allowStale — an instant, slightly-off-level play beats a
+    // minute of spinner, and generation still refreshes the file.
     const cachedLoudness = sidecar.loudnessAfter;
     const stale =
       settings.loudnormEnabled &&
       typeof cachedLoudness === "number" &&
       Math.abs(cachedLoudness - settings.loudnormTargetLufs) > 1;
-    if (!stale) {
+    if (!stale || options.allowStale) {
       log(`Audio cache hit (${path.basename(audioPath)}).`);
       return { ...sidecar, path: audioPath, source: "cache" };
     }

@@ -29,7 +29,12 @@ export async function GET(
   }
 
   try {
-    const audio = await ensureTrackAudio(track, () => {}, { timeoutMs: 180_000 });
+    // allowStale: an instant play at a slightly old loudness beats a minute of
+    // spinner; generation refreshes the file when it actually maps it.
+    const audio = await ensureTrackAudio(track, () => {}, {
+      timeoutMs: 180_000,
+      allowStale: true,
+    });
     return new NextResponse(new Uint8Array(fs.readFileSync(audio.path)), {
       status: 200,
       headers: {
