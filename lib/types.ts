@@ -50,7 +50,7 @@ export type Track = {
   artworkUrl: string;
   externalUrl: string;
   isrc?: string;
-  source: "liked" | "playlist" | "library";
+  source: "liked" | "playlist" | "library" | "search";
   sourceLabel: string;
   importedAt: string;
 };

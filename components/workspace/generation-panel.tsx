@@ -5,10 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "@/components/ui/number-field";
 import {
+  DerivedDifficultyKey,
   defaultDifficultyParams,
+  derivedDifficultyKeys,
   descriptorVocabulary,
   modelVersions,
   numberRangeByKey,
+  starToSettings,
   supportsStyleTokens,
 } from "@/lib/generatorConfig";
 import { AppSettings, GeneratorParams, ModelVersion } from "@/lib/types";
@@ -26,53 +29,90 @@ type Props = {
 
 const range = (key: keyof GeneratorParams) => numberRangeByKey[key] ?? {};
 
+const derivedFieldLabels: Record<DerivedDifficultyKey, string> = {
+  approachRate: "AR",
+  overallDifficulty: "OD",
+  circleSize: "CS",
+  hpDrainRate: "HP",
+};
+
 export function GenerationPanel({ settings, selectedCount, busy, onGenerate }: Props) {
-  const [params, setParams] = useState<GeneratorParams>({
-    ...defaultDifficultyParams,
-    ...settings.generationDefaults,
+  // Auto-first: the saved star seeds the panel and AR/OD/CS/HP derive from it.
+  // Saved AR/OD/CS/HP are deliberately ignored — the old UI wrote them back on
+  // every generate, so they are stale echoes of old defaults, not choices.
+  // Pins (manual overrides) are session-only state.
+  const [params, setParams] = useState<GeneratorParams>(() => {
+    const seeded = { ...defaultDifficultyParams, ...settings.generationDefaults };
+    return { ...seeded, ...starToSettings(seeded.difficulty ?? defaultDifficultyParams.difficulty) };
   });
+  const [pinned, setPinned] = useState<Set<DerivedDifficultyKey>>(new Set());
   const [modelVersion, setModelVersion] = useState<ModelVersion>(settings.modelVersion);
   const [experimentalCompile, setExperimentalCompile] = useState(settings.experimentalCompile);
 
   const set = <K extends keyof GeneratorParams>(key: K, value: GeneratorParams[K]) =>
     setParams((prev) => ({ ...prev, [key]: value }));
 
+  /** Star drives everything not pinned; pinned values ride along untouched. */
+  const setStars = (stars: number | null) => {
+    setParams((prev) => {
+      const next = { ...prev, difficulty: stars };
+      if (stars !== null) {
+        const derived = starToSettings(stars);
+        for (const key of derivedDifficultyKeys) {
+          if (!pinned.has(key)) next[key] = derived[key];
+        }
+      }
+      return next;
+    });
+  };
+
+  /** Typing a value takes the field off auto until its "auto" button is pressed. */
+  const setDerived = (key: DerivedDifficultyKey, value: number | null) => {
+    set(key, value);
+    setPinned((prev) => new Set(prev).add(key));
+  };
+
+  const unpin = (key: DerivedDifficultyKey) => {
+    setPinned((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    const stars = params.difficulty ?? defaultDifficultyParams.difficulty;
+    set(key, starToSettings(stars)[key]);
+  };
+
   const styleAware = supportsStyleTokens(modelVersion);
 
   return (
     <section className="section">
       <h2 className="section__title">Difficulty</h2>
+      <NumberField
+        label="Star rating"
+        value={params.difficulty}
+        onChange={setStars}
+        hint="AR, OD, CS and HP follow what ranked maps use at this rating."
+        {...range("difficulty")}
+      />
       <div className="field-grid">
-        <NumberField
-          label="Star rating"
-          value={params.difficulty}
-          onChange={(v) => set("difficulty", v)}
-          {...range("difficulty")}
-        />
-        <NumberField
-          label="AR"
-          value={params.approachRate}
-          onChange={(v) => set("approachRate", v)}
-          {...range("approachRate")}
-        />
-        <NumberField
-          label="OD"
-          value={params.overallDifficulty}
-          onChange={(v) => set("overallDifficulty", v)}
-          {...range("overallDifficulty")}
-        />
-        <NumberField
-          label="CS"
-          value={params.circleSize}
-          onChange={(v) => set("circleSize", v)}
-          {...range("circleSize")}
-        />
-        <NumberField
-          label="HP"
-          value={params.hpDrainRate}
-          onChange={(v) => set("hpDrainRate", v)}
-          {...range("hpDrainRate")}
-        />
+        {derivedDifficultyKeys.map((key) => (
+          <NumberField
+            key={key}
+            label={derivedFieldLabels[key]}
+            value={params[key]}
+            onChange={(v) => setDerived(key, v)}
+            trailing={
+              pinned.has(key) ? (
+                <button type="button" className="field__auto" onClick={() => unpin(key)}>
+                  auto
+                </button>
+              ) : (
+                <span className="field__auto field__auto--on">auto</span>
+              )
+            }
+            {...range(key)}
+          />
+        ))}
       </div>
 
       <details className="advanced">

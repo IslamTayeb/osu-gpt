@@ -64,9 +64,8 @@ export function SettingsPanel({ settings, onSave, firstRun }: Props) {
   const current = estimates?.find((e) => e.id === draft.gpuProfile);
 
   return (
+    // The parent <details> summary carries the "Settings" heading now.
     <section className="section">
-      <h2 className="section__title">{firstRun ? "Setup" : "Settings"}</h2>
-
       <label className="field">
         <span className="field__label">Generate on</span>
         <select
@@ -92,8 +91,8 @@ export function SettingsPanel({ settings, onSave, firstRun }: Props) {
           >
             {(estimates ?? []).map((profile) => (
               <option key={profile.id} value={profile.id}>
-                {profile.label} — starts in ~{formatDuration(profile.expectedWaitSec)}
-                {profile.freeNow > 0 ? ` (${profile.freeNow} free)` : " (none free)"}
+                {profile.label} — starts in ~{formatDuration(profile.expectedWaitSec)} ·{" "}
+                {profile.freeNow > 0 ? `${profile.freeNow} free` : "none free"}
               </option>
             ))}
             {!estimates ? <option value={draft.gpuProfile}>Checking the cluster…</option> : null}

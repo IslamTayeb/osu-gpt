@@ -29,15 +29,66 @@ export const requiredParamKeys = [
   "hpDrainRate",
 ] as const;
 
-export const defaultDifficultyParams: Required<
-  Pick<GeneratorParams, (typeof requiredParamKeys)[number]>
-> = {
+// Mapped to plain number: Required<> strips the `?` but not the `| null`, and
+// these are fallbacks — a nullable fallback defeats the point.
+export const defaultDifficultyParams: {
+  [K in (typeof requiredParamKeys)[number]]: number;
+} = {
   difficulty: 5.2,
   approachRate: 9,
   overallDifficulty: 8,
   circleSize: 4,
   hpDrainRate: 5,
 };
+
+export type DerivedDifficultyKey =
+  | "approachRate"
+  | "overallDifficulty"
+  | "circleSize"
+  | "hpDrainRate";
+
+/**
+ * What a ranked osu! map typically runs at a given star rating, from the
+ * ranking-criteria difficulty guidelines (band midpoints) pinned to the wiki's
+ * star bands: Easy ≤1.99, Normal 2–2.69, Hard 2.7–3.99, Insane 4–5.29,
+ * Expert 5.3–6.49, Expert+ 6.5+. Values between anchors interpolate linearly.
+ * HP peaks at Insane and then eases off — very hard maps use moderate drain so
+ * they stay passable — and CS holds near 4, which is where standard maps live.
+ */
+const starAnchors: [stars: number, settings: Record<DerivedDifficultyKey, number>][] = [
+  [1.0, { approachRate: 3.5, overallDifficulty: 2.0, circleSize: 3.0, hpDrainRate: 2.0 }],
+  [2.35, { approachRate: 5.0, overallDifficulty: 4.0, circleSize: 3.5, hpDrainRate: 4.0 }],
+  [3.35, { approachRate: 7.0, overallDifficulty: 6.0, circleSize: 4.0, hpDrainRate: 5.0 }],
+  [4.65, { approachRate: 8.7, overallDifficulty: 8.0, circleSize: 4.0, hpDrainRate: 6.0 }],
+  [5.9, { approachRate: 9.3, overallDifficulty: 8.5, circleSize: 4.0, hpDrainRate: 5.5 }],
+  // CS stays flat at 4 for anything hard: high-star maps keep standard circles.
+  [7.5, { approachRate: 9.8, overallDifficulty: 9.2, circleSize: 4.0, hpDrainRate: 5.0 }],
+];
+
+export const derivedDifficultyKeys = Object.keys(
+  starAnchors[0][1],
+) as DerivedDifficultyKey[];
+
+/** AR/OD/CS/HP a typical ranked map would have at this star rating. */
+export function starToSettings(stars: number): Record<DerivedDifficultyKey, number> {
+  const first = starAnchors[0];
+  const last = starAnchors[starAnchors.length - 1];
+  const round = (v: number) => Math.round(v * 10) / 10;
+
+  if (stars <= first[0]) return { ...first[1] };
+  if (stars >= last[0]) return { ...last[1] };
+
+  for (let i = 1; i < starAnchors.length; i++) {
+    const [hiStars, hi] = starAnchors[i];
+    if (stars > hiStars) continue;
+    const [loStars, lo] = starAnchors[i - 1];
+    const t = (stars - loStars) / (hiStars - loStars);
+    return Object.fromEntries(
+      derivedDifficultyKeys.map((key) => [key, round(lo[key] + (hi[key] - lo[key]) * t)]),
+    ) as Record<DerivedDifficultyKey, number>;
+  }
+  return { ...last[1] };
+}
 
 export const numberRangeByKey: Partial<
   Record<keyof GeneratorParams, { min?: number; max?: number; step?: number }>

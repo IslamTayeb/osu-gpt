@@ -9,6 +9,7 @@ import { GenerationPanel } from "@/components/workspace/generation-panel";
 import { JobsPane } from "@/components/workspace/jobs-pane";
 import { LibraryPane } from "@/components/workspace/library-pane";
 import { SettingsPanel } from "@/components/workspace/settings-panel";
+import { useLibrarySelection } from "@/hooks/use-library-selection";
 import { importProgress } from "@/lib/homeUi";
 import { GPU_PROFILES, estimateSeconds, formatDuration } from "@/lib/runtime/gpuProfiles";
 import type {
@@ -47,8 +48,29 @@ export default function Home() {
   const [page, setPage] = useState(1);
   const pageSize = 100;
 
-  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
-  const lastClickedRef = useRef<string | null>(null);
+  // "library" filters what has been imported; "spotify" searches the catalogue.
+  const [scope, setScope] = useState<"library" | "spotify">("library");
+  const [searchResults, setSearchResults] = useState<Track[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [adding, setAdding] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Selection acts on whatever list is rendered — library page or search results.
+  const visibleTracks = scope === "spotify" ? searchResults : tracks;
+  const {
+    selectedTrackIds,
+    setSelectedTrackIds,
+    selectionRect,
+    toggleTrack,
+    selectVisible,
+    clearSelection,
+    marqueeHandlers,
+  } = useLibrarySelection({
+    tracks: visibleTracks,
+    scrollRef,
+    resetKey: `${scope}|${matchFilter}|${debouncedQuery}`,
+  });
 
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const [matches, setMatches] = useState<Record<string, TrackMatchSnapshot>>({});
@@ -57,9 +79,12 @@ export default function Home() {
   const [importStatus, setImportStatus] = useState<SpotifyImportStatus>({ status: "idle" });
 
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
+  // True from click until the audio actually produces sound — the preview
+  // route may still be resolving Deezer/iTunes, and a pause icon with no
+  // audio reads as broken.
+  const [previewLoading, setPreviewLoading] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const [showSettings, setShowSettings] = useState(false);
   const [waitSecByProfile, setWaitSecByProfile] = useState<Record<string, number>>({});
 
   // Session + settings bootstrap
@@ -76,7 +101,6 @@ export default function Home() {
         setSpotdlAckAt(session.spotdlAcknowledgedAt);
         setImportStatus(session.importStatus ?? { status: "idle" });
         setSettings(loaded);
-        setShowSettings(!loaded.setupCompletedAt);
       } catch {
         toast.error("Could not load the app state.");
       } finally {
@@ -124,6 +148,65 @@ export default function Home() {
   useEffect(() => {
     void loadTracks();
   }, [loadTracks]);
+
+  // Catalogue search. Runs only in Spotify scope so browsing the library never
+  // hits the network, and an empty box clears rather than searching for "".
+  useEffect(() => {
+    if (scope !== "spotify" || !spotifyConnected) return;
+    if (!debouncedQuery) {
+      setSearchResults([]);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    fetch(`/api/library/spotify/search?q=${encodeURIComponent(debouncedQuery)}`)
+      .then((response) => response.json())
+      .then((data: { tracks?: Track[]; error?: string }) => {
+        if (cancelled) return;
+        if (data.error) throw new Error(data.error);
+        setSearchResults(data.tracks ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSearchResults([]);
+          toast.error("Spotify search failed.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSearching(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope, debouncedQuery, spotifyConnected]);
+
+  /**
+   * Picking a search result saves it to the library first — generation reads
+   * tracks from the store, so an unsaved result could not be generated.
+   */
+  const addFromSearch = useCallback(
+    async (track: Track) => {
+      setAdding(true);
+      try {
+        const response = await fetch("/api/library/spotify/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ providerTrackIds: [track.providerTrackId] }),
+        });
+        const data = (await response.json()) as { tracks?: Track[]; error?: string };
+        if (!response.ok || data.error) throw new Error(data.error ?? "Could not add the track.");
+        const saved = data.tracks?.[0] ?? track;
+        setSelectedTrackIds((current) => new Set(current).add(saved.id));
+        setLibraryTotal((current) => current + 1);
+        toast.success(`Added ${saved.title}.`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not add the track.");
+      } finally {
+        setAdding(false);
+      }
+    },
+    [setSelectedTrackIds],
+  );
 
   const loadJobs = useCallback(async () => {
     try {
@@ -192,63 +275,55 @@ export default function Home() {
 
     if (selected.length === 0 && backlog.length === 0) return null;
 
-    const queueWait = waitSecByProfile[profile.id] ?? profile.medianWaitSec;
-    const backlogSec = backlog.length
-      ? estimateSeconds(profile, backlog, batchSize).typical + queueWait
-      : 0;
-    const selectionSec = selected.length
-      ? estimateSeconds(profile, selected, batchSize).typical + (backlog.length ? 0 : queueWait)
-      : 0;
+    // Local runs never touch Slurm, so they wait for nothing.
+    const queueWait =
+      settings.runtime === "dcc" ? (waitSecByProfile[profile.id] ?? profile.medianWaitSec) : 0;
+    const backlogSec = estimateSeconds(profile, backlog, batchSize, queueWait);
+    const selectionSec = estimateSeconds(profile, selected, batchSize, queueWait);
 
-    const where = settings.runtime === "dcc" ? "" : " on this machine";
+    // Split into a value and its qualifier: the readout sets them differently,
+    // and one packed sentence made the number impossible to scan.
+    const where = settings.runtime === "dcc" ? null : "on this machine";
     if (selected.length === 0) {
-      return `${backlogJobs.length} in flight, ~${formatDuration(backlogSec)} left${where}`;
+      const inFlight = `${backlogJobs.length} in flight`;
+      return {
+        value: formatDuration(backlogSec),
+        detail: where ? `${inFlight} ${where}` : inFlight,
+      };
     }
-    const total = formatDuration(backlogSec + selectionSec);
-    return backlog.length > 0
-      ? `~${total}${where} (behind ${backlogJobs.length} already queued)`
-      : `~${total}${where}`;
+    const queued = backlog.length > 0 ? `behind ${backlogJobs.length} already queued` : null;
+    return {
+      value: formatDuration(backlogSec + selectionSec),
+      detail: [queued, where].filter(Boolean).join(" · ") || null,
+    };
   }, [settings, selectedTrackIds, tracksById, jobs, waitSecByProfile]);
-
-  const toggleTrack = useCallback(
-    (trackId: string, shiftKey: boolean) => {
-      setSelectedTrackIds((previous) => {
-        const next = new Set(previous);
-        if (shiftKey && lastClickedRef.current) {
-          const start = tracks.findIndex((t) => t.id === lastClickedRef.current);
-          const end = tracks.findIndex((t) => t.id === trackId);
-          if (start >= 0 && end >= 0) {
-            const [from, to] = start < end ? [start, end] : [end, start];
-            for (let index = from; index <= to; index += 1) next.add(tracks[index].id);
-            return next;
-          }
-        }
-        if (next.has(trackId)) next.delete(trackId);
-        else next.add(trackId);
-        return next;
-      });
-      lastClickedRef.current = trackId;
-    },
-    [tracks],
-  );
 
   const togglePreview = useCallback(
     (track: Track) => {
       if (playingTrackId === track.id) {
         audioRef.current?.pause();
         setPlayingTrackId(null);
+        setPreviewLoading(false);
         return;
       }
       audioRef.current?.pause();
       const audio = new Audio(`/api/previews/${encodeURIComponent(track.id)}`);
+      // `playing` fires when sound actually starts; until then the row shows a
+      // spinner instead of a pause icon it can't honour yet.
+      audio.onplaying = () => setPreviewLoading(false);
       audio.onended = () => setPlayingTrackId(null);
       audio.onerror = () => {
         setPlayingTrackId(null);
+        setPreviewLoading(false);
         toast.error(`No preview found for "${track.title}".`);
       };
       audioRef.current = audio;
-      void audio.play().catch(() => setPlayingTrackId(null));
+      void audio.play().catch(() => {
+        setPlayingTrackId(null);
+        setPreviewLoading(false);
+      });
       setPlayingTrackId(track.id);
+      setPreviewLoading(true);
     },
     [playingTrackId],
   );
@@ -267,7 +342,6 @@ export default function Home() {
       return;
     }
     setSettings(data.settings);
-    if (data.settings.setupCompletedAt) setShowSettings(false);
     toast.success("Settings saved.");
   }, []);
 
@@ -386,9 +460,6 @@ export default function Home() {
           >
             {matching ? "Checking..." : "Check existing maps"}
           </Button>
-          <Button variant="ghost" onClick={() => setShowSettings((value) => !value)}>
-            Settings
-          </Button>
         </div>
       </header>
 
@@ -409,95 +480,135 @@ export default function Home() {
       ) : null}
 
       <div className="workspace-grid">
-        <aside className="pane">
-          <div className="pane__body section">
-            <h2 className="section__title">Filter</h2>
+        <main className="pane">
+          <div className="pane__header pane__header--split">
+            <h2 className="section__title">
+              {scope === "spotify" ? "Spotify" : "Library"} — {selectedTrackIds.size} selected
+            </h2>
+            {selectionEstimate ? (
+              <p className="estimate">
+                <span className="estimate__label">Time to finish</span>
+                <span className="estimate__value">{selectionEstimate.value}</span>
+                {selectionEstimate.detail ? (
+                  <span className="estimate__detail">{selectionEstimate.detail}</span>
+                ) : null}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="toolbar">
+            <select
+              className="ui-select toolbar__scope"
+              aria-label="Search in"
+              value={scope}
+              onChange={(event) => {
+                setScope(event.target.value as "library" | "spotify");
+                setPage(1);
+              }}
+            >
+              <option value="library">My library</option>
+              <option value="spotify">All of Spotify</option>
+            </select>
             <Input
-              placeholder="Search title or artist"
+              className="toolbar__search"
+              placeholder={
+                scope === "spotify" ? "Search every song on Spotify" : "Search title or artist"
+              }
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
                 setPage(1);
               }}
             />
-            <label className="field">
-              <span className="field__label">Show</span>
-              <select
-                className="ui-select"
-                value={matchFilter}
-                onChange={(event) => {
-                  setMatchFilter(event.target.value as MatchFilter);
-                  setPage(1);
-                }}
-              >
-                <option value="all">All tracks</option>
-                <option value="unmatched">No existing map</option>
-                <option value="matched">Has existing map</option>
-                <option value="generated">Already generated</option>
-              </select>
-            </label>
-            <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
-              <Button
-                variant="ghost"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-              >
-                Prev
-              </Button>
-              <span className="muted">
-                {page} / {totalPages}
-              </span>
-              <Button
-                variant="ghost"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-              >
-                Next
-              </Button>
-            </div>
-            <div style={{ display: "flex", gap: "0.4rem" }}>
-              <Button
-                variant="ghost"
-                onClick={() => setSelectedTrackIds(new Set(tracks.map((t) => t.id)))}
-              >
-                Select page
-              </Button>
-              <Button variant="ghost" onClick={() => setSelectedTrackIds(new Set())}>
-                Clear
-              </Button>
-            </div>
+            {/* Filtering and paging describe the imported library, so they
+                disappear while searching the catalogue. */}
+            {scope === "library" ? (
+              <>
+                <select
+                  className="ui-select toolbar__scope"
+                  aria-label="Show"
+                  value={matchFilter}
+                  onChange={(event) => {
+                    setMatchFilter(event.target.value as MatchFilter);
+                    setPage(1);
+                  }}
+                >
+                  <option value="all">All tracks</option>
+                  <option value="unmatched">No existing map</option>
+                  <option value="matched">Has existing map</option>
+                  <option value="generated">Already generated</option>
+                </select>
+                <Button
+                  variant="ghost"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                >
+                  Prev
+                </Button>
+                <span className="muted">
+                  {page} / {totalPages}
+                </span>
+                <Button
+                  variant="ghost"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                >
+                  Next
+                </Button>
+                <Button variant="ghost" onClick={selectVisible}>
+                  Select page
+                </Button>
+                <Button variant="ghost" onClick={clearSelection}>
+                  Clear
+                </Button>
+              </>
+            ) : null}
           </div>
-        </aside>
 
-        <main className="pane">
-          <div className="pane__header">
-            <h2 className="section__title">
-              Library — {selectedTrackIds.size} selected
-              {selectionEstimate ? <span className="muted"> · {selectionEstimate}</span> : null}
-            </h2>
+          {/* The marquee lives on the scroll container so drag coordinates and
+              scroll offsets share one coordinate space. Search mode is
+              click-to-pick; drags there would fight the pick action. */}
+          <div
+            className="track-scroll"
+            ref={scrollRef}
+            {...(scope === "library" ? marqueeHandlers : {})}
+          >
+            <LibraryPane
+              tracks={visibleTracks}
+              matches={matches}
+              loading={scope === "spotify" ? searching || adding : tracksLoading}
+              selectedTrackIds={selectedTrackIds}
+              completedTrackIds={completedTrackIds}
+              playingTrackId={playingTrackId}
+              previewLoading={previewLoading}
+              onToggleTrack={toggleTrack}
+              onTogglePreview={togglePreview}
+              onPickTrack={scope === "spotify" ? addFromSearch : undefined}
+              emptyMessage={
+                scope === "spotify"
+                  ? debouncedQuery
+                    ? "Nothing on Spotify matched that."
+                    : "Type to search Spotify."
+                  : "No tracks match these filters."
+              }
+            />
+            {selectionRect && (selectionRect.width > 5 || selectionRect.height > 5) ? (
+              <div
+                className="marquee"
+                style={{
+                  left: selectionRect.left,
+                  top: selectionRect.top,
+                  width: selectionRect.width,
+                  height: selectionRect.height,
+                }}
+              />
+            ) : null}
           </div>
-          <LibraryPane
-            tracks={tracks}
-            matches={matches}
-            loading={tracksLoading}
-            selectedTrackIds={selectedTrackIds}
-            completedTrackIds={completedTrackIds}
-            playingTrackId={playingTrackId}
-            onToggleTrack={toggleTrack}
-            onTogglePreview={togglePreview}
-          />
         </main>
 
         <aside className="pane">
           <div className="pane__body">
-            {settings && showSettings ? (
-              <SettingsPanel
-                settings={settings}
-                onSave={saveSettings}
-                firstRun={!settings.setupCompletedAt}
-              />
-            ) : null}
-            {settings && !showSettings ? (
+            {settings && settings.setupCompletedAt ? (
               <GenerationPanel
                 key={settings.setupCompletedAt ?? "initial"}
                 settings={settings}
@@ -525,6 +636,18 @@ export default function Home() {
                 }}
               />
             </section>
+            {settings ? (
+              <details className="advanced" open={!settings.setupCompletedAt}>
+                <summary>Settings</summary>
+                <div className="advanced__body">
+                  <SettingsPanel
+                    settings={settings}
+                    onSave={saveSettings}
+                    firstRun={!settings.setupCompletedAt}
+                  />
+                </div>
+              </details>
+            ) : null}
           </div>
         </aside>
       </div>

@@ -1,7 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { FALLBACK_TARGET, loadPin, parseGpuAvail, Pin } from "./dccConfig";
-import { DEFAULT_GPU_PROFILE, GPU_PROFILES, GpuProfileId } from "./gpuProfiles";
+import {
+  DEFAULT_GPU_PROFILE,
+  GPU_PROFILES,
+  GpuProfileId,
+  toSlurmWalltime,
+  walltimeSecFor,
+} from "./gpuProfiles";
 import { buildGeneratorParams } from "../generatorConfig";
 
 import { collectArtifacts, setJobState } from "../jobs";
@@ -103,6 +109,7 @@ function buildSbatch(options: {
   modelVersion: string;
   experimentalCompile: boolean;
   itemCount: number;
+  walltime: string;
 }) {
   const { pin, partition, gres, remoteDir, modelVersion, experimentalCompile } = options;
   return `#!/bin/bash
@@ -112,7 +119,7 @@ function buildSbatch(options: {
 #SBATCH --gres=gpu:${gres}:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=00:45:00
+#SBATCH --time=${options.walltime}
 #SBATCH --requeue
 #SBATCH --open-mode=append
 #SBATCH --output=${remoteDir}/slurm.log
@@ -221,6 +228,11 @@ export const dccRuntime: GenerationRuntime = {
     }
 
     const settings = readStore().settings;
+    const profile = GPU_PROFILES[settings.gpuProfile] ?? GPU_PROFILES[DEFAULT_GPU_PROFILE];
+    const walltimeSec = walltimeSecFor(
+      profile,
+      contexts.map((ctx) => ctx.track.durationMs),
+    );
     const script = buildSbatch({
       pin,
       partition: target.partition,
@@ -229,6 +241,7 @@ export const dccRuntime: GenerationRuntime = {
       modelVersion: contexts[0].job.modelVersion || settings.modelVersion,
       experimentalCompile: Boolean(contexts[0].job.experimentalCompile),
       itemCount: contexts.length,
+      walltime: toSlurmWalltime(walltimeSec),
     });
     const slurmJobId = (await ssh(host, "sbatch --parsable", { input: script })).trim();
     log(`Submitted Slurm job ${slurmJobId} (${target.gres} on ${target.partition}).`);

@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { Pause, Play } from "lucide-react";
+import { Loader2, Pause, Play } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { msToClock } from "@/lib/homeUi";
 import type { Track, TrackMatchSnapshot } from "@/lib/types";
@@ -13,8 +13,13 @@ type Props = {
   selectedTrackIds: Set<string>;
   completedTrackIds: Set<string>;
   playingTrackId: string | null;
+  /** True while the playing track's audio is still buffering/resolving. */
+  previewLoading?: boolean;
   onToggleTrack: (trackId: string, shiftKey: boolean) => void;
   onTogglePreview: (track: Track) => void;
+  /** Set in Spotify-search mode: a click saves the result instead of selecting it. */
+  onPickTrack?: (track: Track) => void;
+  emptyMessage?: string;
 };
 
 export function LibraryPane({
@@ -24,8 +29,11 @@ export function LibraryPane({
   selectedTrackIds,
   completedTrackIds,
   playingTrackId,
+  previewLoading = false,
   onToggleTrack,
   onTogglePreview,
+  onPickTrack,
+  emptyMessage = "No tracks match these filters.",
 }: Props) {
   if (loading && tracks.length === 0) {
     return (
@@ -40,34 +48,70 @@ export function LibraryPane({
   if (tracks.length === 0) {
     return (
       <div className="pane__body">
-        <p className="muted">No tracks match these filters.</p>
+        <p className="muted">{emptyMessage}</p>
       </div>
     );
   }
 
   return (
-    <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+    <ul
+      className="track-list"
+      role={onPickTrack ? "list" : "listbox"}
+      aria-multiselectable={onPickTrack ? undefined : true}
+      aria-label={onPickTrack ? "Spotify results" : "Library tracks"}
+    >
       {tracks.map((track) => {
         const selected = selectedTrackIds.has(track.id);
         const playing = playingTrackId === track.id;
+        const buffering = playing && previewLoading;
+        const activate = (shiftKey: boolean) =>
+          onPickTrack ? onPickTrack(track) : onToggleTrack(track.id, shiftKey);
         return (
           <li
             key={track.id}
             className="track"
+            data-track-id={track.id}
             data-selected={selected}
-            onClick={(event) => onToggleTrack(track.id, event.shiftKey)}
+            // Rows are operable, so they take focus and announce their state.
+            // Enter and Space are what a listbox option is expected to answer to.
+            role={onPickTrack ? "button" : "option"}
+            aria-selected={onPickTrack ? undefined : selected}
+            tabIndex={0}
+            title={onPickTrack ? "Add to library and select" : undefined}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              activate(event.shiftKey);
+            }}
+            // In library scope the marquee container owns mouse selection (its
+            // stationary-click path toggles the row); a row onClick here too
+            // would double-toggle. Pick mode has no marquee, so it keeps one.
+            onClick={onPickTrack ? () => onPickTrack(track) : undefined}
           >
             <button
               type="button"
               className="play-button"
               data-playing={playing}
-              aria-label={playing ? `Pause ${track.title}` : `Play ${track.title}`}
+              data-loading={buffering}
+              aria-label={
+                buffering
+                  ? `Loading ${track.title}`
+                  : playing
+                    ? `Pause ${track.title}`
+                    : `Play ${track.title}`
+              }
               onClick={(event) => {
                 event.stopPropagation();
                 onTogglePreview(track);
               }}
             >
-              {playing ? <Pause size={12} /> : <Play size={12} />}
+              {buffering ? (
+                <Loader2 size={12} className="spin" />
+              ) : playing ? (
+                <Pause size={12} />
+              ) : (
+                <Play size={12} />
+              )}
             </button>
             {track.artworkUrl ? (
               <Image

@@ -8,12 +8,22 @@
   --border: rgba(255, 255, 255, 0.1);
   --muted-fg: #a1a1a1;
   --accent: #f66500;
+  /* Text laid on the accent. White on this orange is 3.1:1 and fails AA; the
+     near-black is 5.4:1, and ::selection below already reads dark-on-orange. */
+  --accent-ink: #1e1e1e;
   --link: #4aa3e0;
   --ok: #4ade80;
   --warn: #fbbf24;
   --danger: #f87171;
   --radius: 2px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  /* Four steps, not seven. The old scale ran 0.65–0.95rem in ~0.03 increments,
+     which reads as inconsistency rather than hierarchy. */
+  --text-label: 0.68rem;
+  --text-body: 0.8rem;
+  --text-title: 0.95rem;
+  --text-readout: 1.3rem;
 }
 
 :root[data-theme="light"] {
@@ -30,6 +40,22 @@
 }
 
 * { box-sizing: border-box; }
+
+/* One focus treatment for everything reachable by keyboard. Inputs used to set
+   outline:none and signal focus only by border colour, which left the track
+   rows and icon buttons with no visible focus at all. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 html, body {
   margin: 0;
@@ -67,14 +93,14 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 .app__title {
   margin: 0;
   font-family: var(--mono);
-  font-size: 0.85rem;
+  font-size: var(--text-body);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) 380px;
   flex: 1;
   min-height: 0;
 }
@@ -97,7 +123,45 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
   border-bottom: 1px solid var(--border);
 }
 
+.pane__header--split {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
 .pane__body { padding: 1rem; }
+
+/* The one piece of type given room to speak. Waiting on a shared cluster is
+   what this tool has that a music library does not, and the estimate swings by
+   hours with the GPU choice — so it is set as a readout, not an aside. */
+.estimate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  margin: 0;
+  text-align: right;
+}
+
+.estimate__value {
+  font-family: var(--mono);
+  font-size: var(--text-readout);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.estimate__label {
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+}
+
+.estimate__detail { font-size: var(--text-label); color: var(--muted-fg); }
 
 .section {
   display: flex;
@@ -108,10 +172,15 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 }
 .section:last-child { border-bottom: none; }
 
+/* A pane body that is itself a section still needs the body's side padding.
+   Both selectors are one class, so `.section { padding: 1rem 0 }` above wins on
+   source order and flattens the left pane against the window edge. */
+.pane__body.section { padding: 1rem; }
+
 .section__title {
   margin: 0;
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -128,16 +197,46 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 
 .field__label {
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: var(--text-label);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-fg);
 }
 
-.field__hint, .note, .muted { font-size: 0.75rem; color: var(--muted-fg); }
-.ok { color: var(--ok); font-size: 0.8rem; }
-.warn { color: var(--warn); font-size: 0.8rem; }
-.danger { color: var(--danger); font-size: 0.8rem; }
+.field__label--row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+/* The auto marker on derived difficulty fields: a live label while the field
+   follows the star, a reset button once the user has pinned a value. */
+.field__auto {
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 0.25rem;
+  cursor: pointer;
+}
+.field__auto:hover { border-color: var(--accent); color: var(--fg); }
+.field__auto--on {
+  border-color: transparent;
+  color: var(--accent);
+  cursor: default;
+}
+
+/* Hints sit at body size and separate themselves by colour. Distinguishing
+   them by a 0.05rem step instead just read as a rendering accident. */
+.field__hint, .note, .muted { font-size: var(--text-body); color: var(--muted-fg); }
+.ok { color: var(--ok); font-size: var(--text-body); }
+.warn { color: var(--warn); font-size: var(--text-body); }
+.danger { color: var(--danger); font-size: var(--text-body); }
 
 .ui-input, .ui-select, select.ui-select {
   width: 100%;
@@ -147,12 +246,12 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-body);
   transition: border-color 120ms ease;
 }
-.ui-input:focus, .ui-select:focus { outline: none; border-color: var(--accent); }
+.ui-input:focus, .ui-select:focus { border-color: var(--accent); }
 
-.check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; }
+.check { display: flex; align-items: center; gap: 0.5rem; font-size: var(--text-body); }
 .check input { accent-color: var(--accent); }
 
 .advanced {
@@ -163,7 +262,7 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 .advanced > summary {
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 0.7rem;
+  font-size: var(--text-label);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted-fg);
@@ -178,7 +277,7 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--text-label);
   cursor: pointer;
 }
 .chips button:hover { border-color: var(--accent); }
@@ -190,11 +289,11 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
   gap: 0.4rem;
   padding: 0.45rem 0.85rem;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   border: 1px solid var(--accent);
   border-radius: var(--radius);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--text-body);
   font-weight: 600;
   cursor: pointer;
   transition: opacity 120ms ease, border-color 120ms ease;
@@ -211,6 +310,39 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 .ui-button--outline:hover:not(:disabled),
 .ui-button--default:hover:not(:disabled) { border-color: var(--accent); opacity: 1; }
 
+/* Marquee drag needs one coordinate space for rows, drag rect and scrolling,
+   so this wrapper owns the scroll instead of .pane. */
+.track-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.marquee {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+/* Element+class so this outranks the `select.ui-select { width: 100% }` base. */
+.toolbar select.toolbar__scope { width: auto; }
+.toolbar .toolbar__search { flex: 1; min-width: 160px; width: auto; }
+
+.track-list { list-style: none; margin: 0; padding: 0; }
+
 .track {
   display: flex;
   align-items: center;
@@ -224,9 +356,9 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 .track__art { width: 34px; height: 34px; border-radius: var(--radius); object-fit: cover; flex-shrink: 0; }
 .track__text { min-width: 0; flex: 1; }
 .track__title, .track__artists { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.track__title { font-size: 0.85rem; }
-.track__artists { font-size: 0.75rem; color: var(--muted-fg); }
-.track__duration { font-family: var(--mono); font-size: 0.72rem; color: var(--muted-fg); }
+.track__title { font-size: var(--text-body); }
+.track__artists { font-size: var(--text-label); color: var(--muted-fg); }
+.track__duration { font-family: var(--mono); font-size: var(--text-label); color: var(--muted-fg); }
 
 .play-button {
   width: 26px;
@@ -242,10 +374,14 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 }
 .play-button:hover, .play-button[data-playing="true"] { color: var(--accent); border-color: var(--accent); }
 
-.job { padding: 0.6rem 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+/* Buffering: the preview route may still be resolving an audio source. */
+.spin { animation: spin 700ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.job { padding: 0.6rem 0; border-bottom: 1px solid var(--border); font-size: var(--text-body); }
 .job__status {
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: var(--text-label);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -263,28 +399,17 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: var(--text-label);
   white-space: pre-wrap;
   word-break: break-word;
 }
-
-.ui-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem;
-}
-.ui-card__header, .ui-card__content { display: flex; flex-direction: column; gap: 0.5rem; }
-.ui-card__title { margin: 0; font-size: 0.95rem; }
-
-.cluster-status { display: flex; flex-direction: column; gap: 0.4rem; }
 
 .banner {
   padding: 0.6rem 0.8rem;
   border: 1px solid var(--border);
   border-left: 2px solid var(--accent);
   border-radius: var(--radius);
-  font-size: 0.82rem;
+  font-size: var(--text-body);
 }
 .banner[data-tone="error"] { border-left-color: var(--danger); }
 
@@ -296,31 +421,19 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-family: var(--mono);
-  font-size: 0.65rem;
+  font-size: var(--text-label);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--muted-fg);
 }
 
-.ui-progress { height: 3px; background: var(--surface); border-radius: var(--radius); overflow: hidden; }
-.ui-progress__bar { height: 100%; background: var(--accent); }
-
+.job 
 .ui-skeleton { background: var(--surface); border-radius: var(--radius); min-height: 1rem; }
 
-.spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 700ms linear infinite;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.scroll-x { overflow-x: auto; }
 
 @media (max-width: 1100px) {
-  .workspace-grid { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
+  /* Library first and flexible; the control column sizes to its contents. */
+  .workspace-grid { grid-template-columns: 1fr; grid-template-rows: minmax(320px, 1fr) auto; }
   .pane { border-right: none; border-bottom: 1px solid var(--border); }
+  .pane__header--split { flex-wrap: wrap; }
 }
