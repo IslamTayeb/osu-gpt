@@ -278,6 +278,22 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 }
 .ui-input:focus, .ui-select:focus { border-color: var(--accent); }
 
+/* Native select chrome varies and crams its arrow against the text; draw our
+   own chevron with breathing room on both sides. */
+.ui-select, select.ui-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 1.8rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23a1a1a1' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 10px 6px;
+}
+:root[data-theme="light"] .ui-select,
+:root[data-theme="light"] select.ui-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b6865' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+}
+
 .check { display: flex; align-items: center; gap: 0.5rem; font-size: var(--text-body); }
 .check input { accent-color: var(--accent); }
 
