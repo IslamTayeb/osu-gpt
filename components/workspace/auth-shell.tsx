@@ -16,7 +16,7 @@ export function AuthShell({ bootstrapping }: { bootstrapping: boolean }) {
           <h1 className="section__title">osu-gpt</h1>
           <p>Turn your Spotify liked songs into playable osu! beatmaps.</p>
           <p className="muted">
-            Import your library, check for existing Ranked or Loved maps, and generate the rest on
+            Import your library and generate playable maps on
             the GPU cluster.
           </p>
           <Link href="/api/auth/spotify/login" className={buttonVariants()}>

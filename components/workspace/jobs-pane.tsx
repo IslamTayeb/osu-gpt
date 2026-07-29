@@ -19,29 +19,37 @@ export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }
     return <p className="muted">No generation jobs yet.</p>;
   }
 
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.5rem" }}>
-        <Button variant="ghost" onClick={onClearHistory}>
-          Clear finished
-        </Button>
-      </div>
-      {jobs.map((job) => {
-        const track = tracksById[job.trackId];
-        const active = job.status === "queued" || job.status === "running";
-        return (
+  // Jobs that rode in one Slurm batch share a slurmJobId; group them so the
+  // list reads as what actually happened: one GPU process, several maps.
+  const groups: GenerationJob[][] = [];
+  const byBatch = new Map<string, GenerationJob[]>();
+  for (const job of jobs) {
+    const batchId = job.dcc?.slurmJobId;
+    if (batchId && byBatch.has(batchId)) {
+      byBatch.get(batchId)!.push(job);
+      continue;
+    }
+    const group = [job];
+    if (batchId) byBatch.set(batchId, group);
+    groups.push(group);
+  }
+
+  const renderJob = (job: GenerationJob, grouped: boolean) => {
+    const track = tracksById[job.trackId];
+    const active = job.status === "queued" || job.status === "running";
+    return (
           <div key={job.id} className="job">
             <div style={{ display: "flex", alignItems: "baseline", gap: "0.5rem" }}>
               <span className="job__status" data-status={job.status}>
                 {job.status}
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                {track ? `${track.artists.join(", ")} — ${track.title}` : job.trackId}
+                {job.trackLabel ?? (track ? `${track.artists.join(", ")} — ${track.title}` : job.trackId)}
               </span>
               <span className="ui-badge">{job.modelVersion}</span>
             </div>
 
-            {job.dcc ? (
+            {job.dcc && !grouped ? (
               <p className="muted">
                 Slurm {job.dcc.slurmJobId} on {job.dcc.gres} ({job.dcc.partition})
                 {job.dcc.statusReason ? ` — ${job.dcc.statusReason}` : ""}
@@ -79,6 +87,28 @@ export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }
             </div>
 
             {openJobId === job.id ? <JobLog jobId={job.id} live={active} /> : null}
+          </div>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.5rem" }}>
+        <Button variant="ghost" onClick={onClearHistory}>
+          Clear finished
+        </Button>
+      </div>
+      {groups.map((group) => {
+        const [first] = group;
+        if (group.length === 1) return renderJob(first, false);
+        return (
+          <div key={first.dcc?.slurmJobId ?? first.id} className="job-batch">
+            <p className="job-batch__title">
+              Batch of {group.length} — Slurm {first.dcc?.slurmJobId} on {first.dcc?.gres} (
+              {first.dcc?.partition})
+              {first.dcc?.statusReason ? ` — ${first.dcc.statusReason}` : ""}
+            </p>
+            {group.map((job) => renderJob(job, true))}
           </div>
         );
       })}

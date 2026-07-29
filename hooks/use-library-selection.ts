@@ -39,8 +39,6 @@ type UseLibrarySelectionParams = {
   /** The tracks currently rendered, in render order. */
   tracks: Track[];
   scrollRef: RefObject<HTMLDivElement | null>;
-  /** Selection clears when this changes (scope/filter/query — not page). */
-  resetKey: string;
 };
 
 export type MarqueeHandlers = {
@@ -120,7 +118,6 @@ function isEditableElement(element: Element | null): element is HTMLElement {
 export function useLibrarySelection({
   tracks,
   scrollRef,
-  resetKey,
 }: UseLibrarySelectionParams): UseLibrarySelectionResult {
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null);
@@ -131,18 +128,6 @@ export function useLibrarySelection({
     anchorRef.current = null;
     setSelectedTrackIds(new Set());
   }, []);
-
-  // A selection made under one filter must not silently survive into another —
-  // the header count would include tracks the user can no longer see.
-  // Page turns don't change resetKey: cross-page selection is deliberate.
-  // Adjusted during render (not in an effect) so no frame shows the stale set.
-  // The anchor is left alone: if it isn't in the new list, shift-range falls
-  // back to a plain toggle; if it is, ranging from it is what the user expects.
-  const [lastResetKey, setLastResetKey] = useState(resetKey);
-  if (lastResetKey !== resetKey) {
-    setLastResetKey(resetKey);
-    setSelectedTrackIds(new Set());
-  }
 
   const toggleTrack = useCallback(
     (trackId: string, shiftKey: boolean) => {

@@ -34,11 +34,13 @@ export const GPU_PROFILES: Record<GpuProfileId, GpuProfile> = {
     ],
     medianWaitSec: 12,
     p90WaitSec: 31,
-    // Measured on job 50905493: 165s elapsed for one 3.13-minute song, of which
-    // generate() was 89.6s. So 165 - 89.6 = 75s fixed, 89.6 / 3.13 = 29s/minute.
+    // Measured on job 50905493 (fp32): 165s elapsed for one 3.13-minute song,
+    // of which generate() was 89.6s → 75s fixed, 29s/audio-minute. 2080s now
+    // run precision=fp16 (fast on Turing), so treat these as an upper bound
+    // and recalibrate from the next measured batch.
     startupSec: 75,
     secPerAudioMinute: 29,
-    note: "Almost always free. No bf16, so it runs fp32 — slower per song, but you start now.",
+    note: "Almost always free. Runs fp16 — slower than the bf16 cards, but you start now.",
   },
   bf16: {
     id: "bf16",

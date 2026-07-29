@@ -146,15 +146,6 @@ export function SettingsPanel({ settings, onSave, firstRun }: Props) {
             <span>Normalize loudness to {draft.loudnormTargetLufs} LUFS</span>
           </label>
 
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={draft.prefetchPreviews}
-              onChange={(event) => setDraft({ ...draft, prefetchPreviews: event.target.checked })}
-            />
-            <span>Pre-fetch previews for the whole library</span>
-          </label>
-
           <Button variant="ghost" onClick={() => refreshEstimates(true)}>
             Re-check cluster
           </Button>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { decodeSignedPayload, encodeSignedPayload, STATE_COOKIE, TOKEN_COOKIE } from "@/lib/auth";
 import { exchangeCodeForToken } from "@/lib/spotify";
+import { rememberRefreshToken } from "@/lib/spotifySession";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const token = await exchangeCodeForToken(code);
+    rememberRefreshToken(token.refreshToken);
     const target = home({ spotify: "connected" });
     const response = NextResponse.redirect(target);
 

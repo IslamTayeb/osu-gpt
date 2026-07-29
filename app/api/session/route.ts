@@ -1,34 +1,33 @@
 import { NextResponse } from "next/server";
-import { getSpotifySession } from "@/lib/spotifySession";
+import { getValidSpotifyAccessToken } from "@/lib/spotifySession";
+import { TOKEN_COOKIE } from "@/lib/auth";
 import { readStore } from "@/lib/store";
-import { decodeOsuRuntimeSession, maskOsuRuntimeSession, OSU_RUNTIME_COOKIE } from "@/lib/osuSession";
-import { cookies } from "next/headers";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const spotify = await getSpotifySession();
-  const cookieStore = await cookies();
-  const osuSession = decodeOsuRuntimeSession(cookieStore.get(OSU_RUNTIME_COOKIE)?.value);
-  const envOsuClientId = process.env.OSU_CLIENT_ID?.trim() ?? "";
-  const envOsuClientSecret = process.env.OSU_CLIENT_SECRET?.trim() ?? "";
-  const envOsuConfigured = Boolean(envOsuClientId && envOsuClientSecret);
+  const { accessToken, updatedCookie } = await getValidSpotifyAccessToken();
   const store = readStore();
-  const spotifyConnected = Boolean(spotify?.accessToken);
+  const spotifyConnected = Boolean(accessToken);
   const importStatus = store.settings.spotifyImport ?? { status: "idle" as const };
-  const maskedEnvClientIdHint = envOsuClientId.length > 2 ? `${envOsuClientId.slice(0, 2)}****` : "****";
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     spotifyConnected,
     spotdlAcknowledgedAt: store.settings.spotdlAcknowledgedAt ?? null,
-    runtime: {
-      osu: osuSession
-        ? { ...maskOsuRuntimeSession(osuSession), source: "session" as const }
-        : envOsuConfigured
-          ? { configured: true, clientIdHint: maskedEnvClientIdHint, source: "env" as const }
-          : { configured: false },
-    },
     trackCount: store.tracks.length,
     importStatus,
   });
+  // A session restored from the stored refresh token rides out as a new cookie.
+  if (updatedCookie) {
+    response.cookies.set({
+      name: TOKEN_COOKIE,
+      value: updatedCookie,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 14,
+    });
+  }
+  return response;
 }

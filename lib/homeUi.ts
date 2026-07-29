@@ -1,25 +1,10 @@
-import { MatchResult, SpotifyImportStatus } from "./types";
+import { SpotifyImportStatus } from "./types";
 
 export function msToClock(ms: number) {
   const total = Math.floor(ms / 1000);
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-export function matchMetaText(match: MatchResult | null | undefined) {
-  if (!match) return "";
-  const meta: string[] = [];
-  if (typeof match.maxDifficultyRating === "number" && Number.isFinite(match.maxDifficultyRating)) {
-    meta.push(`${match.maxDifficultyRating.toFixed(2)}★`);
-  }
-  if (match.topDifficultyName) {
-    meta.push(match.topDifficultyName);
-  }
-  if (typeof match.bpm === "number" && Number.isFinite(match.bpm)) {
-    meta.push(`${Math.round(match.bpm)} BPM`);
-  }
-  return meta.join(" · ");
 }
 
 export function importProgress(status: SpotifyImportStatus) {

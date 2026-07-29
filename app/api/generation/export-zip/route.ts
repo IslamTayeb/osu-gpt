@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
-import { MatchResult, Track } from "@/lib/types";
+import { Track } from "@/lib/types";
 import { readStore } from "@/lib/store";
 
 export const runtime = "nodejs";
@@ -18,11 +18,6 @@ type ManifestRow = {
   album: string;
   provider: string;
   source: string;
-  matchStatus: string;
-  beatmapsetId: string;
-  osuUrl: string;
-  confidence: string;
-  rationale: string;
   generationJobId: string;
   artifactFiles: string;
 };
@@ -44,11 +39,6 @@ function toCsv(rows: ManifestRow[]) {
     "album",
     "provider",
     "source",
-    "matchStatus",
-    "beatmapsetId",
-    "osuUrl",
-    "confidence",
-    "rationale",
     "generationJobId",
     "artifactFiles",
   ];
@@ -62,11 +52,6 @@ function toCsv(rows: ManifestRow[]) {
         row.album,
         row.provider,
         row.source,
-        row.matchStatus,
-        row.beatmapsetId,
-        row.osuUrl,
-        row.confidence,
-        row.rationale,
         row.generationJobId,
         row.artifactFiles,
       ]
@@ -75,13 +60,6 @@ function toCsv(rows: ManifestRow[]) {
     );
   }
   return lines.join("\n");
-}
-
-function preferredMatch(matches: MatchResult[] | undefined) {
-  if (!matches || matches.length === 0) {
-    return null;
-  }
-  return matches[0];
 }
 
 function normalizeTrackIds(body: ExportRequest) {
@@ -94,7 +72,6 @@ function normalizeTrackIds(body: ExportRequest) {
 
 function createManifestRow(
   track: Track,
-  match: MatchResult | null,
   generationJobId: string,
   artifactFiles: string[],
 ) {
@@ -105,11 +82,6 @@ function createManifestRow(
     album: track.album,
     provider: track.provider,
     source: track.sourceLabel,
-    matchStatus: match ? match.status : "none",
-    beatmapsetId: match ? String(match.beatmapsetId) : "",
-    osuUrl: match ? match.url : "",
-    confidence: match ? match.confidence.toFixed(3) : "",
-    rationale: match ? match.rationale : "",
     generationJobId,
     artifactFiles: artifactFiles.join("; "),
   };
@@ -167,19 +139,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const snapshot = store.matchesByTrackId[trackId];
-    const match = preferredMatch(snapshot?.matches);
     const latestJob = sortedJobs[0];
-    rows.push(createManifestRow(track, match, latestJob?.id ?? "", addedFiles));
+    rows.push(createManifestRow(track, latestJob?.id ?? "", addedFiles));
   }
 
-  zip.file("manifest/matches.json", JSON.stringify(rows, null, 2));
-  zip.file("manifest/matches.csv", toCsv(rows));
+  zip.file("manifest/tracks.json", JSON.stringify(rows, null, 2));
+  zip.file("manifest/tracks.csv", toCsv(rows));
   zip.file(
     "manifest/README.txt",
     [
-      "This archive includes generated osu artifacts and match metadata.",
-      "Existing ranked/loved maps are linked in manifest files and are not redistributed here.",
+      "This archive includes generated osu artifacts and a track manifest.",
     ].join("\n"),
   );
 

@@ -131,7 +131,7 @@ export OSUGPT_BATCH_MANIFEST=${remoteDir}/manifest.json
 ${experimentalCompile ? "export MAPPERATORINATOR_COMPILE_DECODE=1\nexport MAPPERATORINATOR_ALLOW_CAPTURE_FALLBACK=1" : ""}
 cd ${pin.dcc.repo}
 echo "osugpt: host=$(hostname) gres=${gres} commit=$(git rev-parse --short HEAD)"
-python batch_inference.py -cn ${modelVersion}
+python batch_inference.py -cn ${modelVersion}${gres.includes("2080") ? " precision=fp16" : ""}
 echo "osugpt: BATCH_DONE"
 `;
 }

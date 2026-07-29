@@ -82,10 +82,6 @@ SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/callback
 
-# Optional (recommended for better osu matching)
-OSU_CLIENT_ID=
-OSU_CLIENT_SECRET=
-OSU_API_KEY=
 EOF
   echo "Created $ROOT_DIR/.env template. Fill in your credentials before running the app."
 else

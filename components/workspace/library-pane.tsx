@@ -4,11 +4,10 @@ import Image from "next/image";
 import { Loader2, Pause, Play } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { msToClock } from "@/lib/homeUi";
-import type { Track, TrackMatchSnapshot } from "@/lib/types";
+import type { Track } from "@/lib/types";
 
 type Props = {
   tracks: Track[];
-  matches: Record<string, TrackMatchSnapshot>;
   loading: boolean;
   selectedTrackIds: Set<string>;
   completedTrackIds: Set<string>;
@@ -24,7 +23,6 @@ type Props = {
 
 export function LibraryPane({
   tracks,
-  matches,
   loading,
   selectedTrackIds,
   completedTrackIds,
@@ -129,18 +127,6 @@ export function LibraryPane({
               <p className="track__title">
                 {track.title}
                 {completedTrackIds.has(track.id) ? <span className="ui-badge"> generated</span> : null}
-                {(matches[track.id]?.matches.length ?? 0) > 0 ? (
-                  <a
-                    className="ui-badge"
-                    href={matches[track.id].topHit?.url ?? "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    {" "}
-                    existing map
-                  </a>
-                ) : null}
               </p>
               <p className="track__artists">{track.artists.join(", ")}</p>
             </span>

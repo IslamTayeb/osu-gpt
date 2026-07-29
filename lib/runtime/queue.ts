@@ -24,10 +24,7 @@ async function drain() {
       // Group consecutive jobs that share a runtime so they ride in one batch.
       const runtimeId = pending[0].runtime;
       const runtime = getRuntime(runtimeId);
-      const limit = Math.max(
-        1,
-        Math.min(runtime?.batchSize ?? 1, readStore().settings.maxConcurrentJobs || 4),
-      );
+      const limit = Math.max(1, runtime?.batchSize ?? 1);
 
       // Cap the batch by audio length as well as by count: a batch that cannot
       // finish inside its Slurm walltime gets killed mid-run, losing every map

@@ -55,20 +55,6 @@ export type Track = {
   importedAt: string;
 };
 
-export type MatchResult = {
-  beatmapsetId: number;
-  title: string;
-  artist: string;
-  status: string;
-  url: string;
-  confidence: number;
-  rationale: string;
-  durationDeltaMs: number;
-  maxDifficultyRating?: number | null;
-  topDifficultyName?: string | null;
-  bpm?: number | null;
-};
-
 export type Artifact = {
   id: string;
   jobId: string;
@@ -97,6 +83,8 @@ export type DccJobMeta = {
 export type GenerationJob = {
   id: string;
   trackId: string;
+  /** "Artist — Title", stamped at creation so display never depends on paging. */
+  trackLabel?: string;
   runtime: RuntimeType;
   modelVersion: ModelVersion;
   generatorParams: GeneratorParams;
@@ -122,16 +110,6 @@ export type SpotifyImportStatus = {
   error?: string;
 };
 
-export type TrackMatchSnapshot = {
-  trackId: string;
-  matches: MatchResult[];
-  topHit?: MatchResult | null;
-  strongMatch: boolean;
-  autoGenerate: boolean;
-  updatedAt: string;
-  error?: string;
-};
-
 export type AppSettings = {
   runtime: RuntimeType;
   /** Which cluster GPU class to aim for; see lib/runtime/gpuProfiles.ts. */
@@ -144,8 +122,6 @@ export type AppSettings = {
   exportDir?: string | null;
   loudnormEnabled: boolean;
   loudnormTargetLufs: number;
-  prefetchPreviews: boolean;
-  maxConcurrentJobs: number;
   modelVersion: ModelVersion;
   experimentalCompile: boolean;
   /** Last-used advanced generation params, restored on load. */
@@ -157,7 +133,11 @@ export type AppSettings = {
 
 export type AppStore = {
   settings: AppSettings;
+  /**
+   * Survives cookie loss so one login lasts. Lives in .data/store.json —
+   * local, gitignored, same trust level as the audio cache. Single-user app.
+   */
+  spotifyRefreshToken?: string;
   tracks: Track[];
   jobs: GenerationJob[];
-  matchesByTrackId: Record<string, TrackMatchSnapshot>;
 };

@@ -9,6 +9,7 @@ import { GenerationPanel } from "@/components/workspace/generation-panel";
 import { JobsPane } from "@/components/workspace/jobs-pane";
 import { LibraryPane } from "@/components/workspace/library-pane";
 import { SettingsPanel } from "@/components/workspace/settings-panel";
+import { ThemeToggle } from "@/components/workspace/theme-toggle";
 import { useLibrarySelection } from "@/hooks/use-library-selection";
 import { importProgress } from "@/lib/homeUi";
 import { GPU_PROFILES, estimateSeconds, formatDuration } from "@/lib/runtime/gpuProfiles";
@@ -19,7 +20,6 @@ import type {
   ModelVersion,
   SpotifyImportStatus,
   Track,
-  TrackMatchSnapshot,
 } from "@/lib/types";
 
 type SessionResponse = {
@@ -29,7 +29,7 @@ type SessionResponse = {
   importStatus: SpotifyImportStatus;
 };
 
-type MatchFilter = "all" | "matched" | "unmatched" | "generated";
+type MatchFilter = "all" | "generated";
 
 export default function Home() {
   const [bootstrapping, setBootstrapping] = useState(true);
@@ -69,12 +69,9 @@ export default function Home() {
   } = useLibrarySelection({
     tracks: visibleTracks,
     scrollRef,
-    resetKey: `${scope}|${matchFilter}|${debouncedQuery}`,
   });
 
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
-  const [matches, setMatches] = useState<Record<string, TrackMatchSnapshot>>({});
-  const [matching, setMatching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [importStatus, setImportStatus] = useState<SpotifyImportStatus>({ status: "idle" });
 
@@ -130,14 +127,12 @@ export default function Home() {
         tracks: Track[];
         totalTracks: number;
         pagination: { total: number; totalPages: number };
-        matchesByTrackId?: Record<string, TrackMatchSnapshot>;
       };
       setTracks(data.tracks ?? []);
       // pagination.total reflects the active filters; totalTracks is the library size.
       setTracksTotal(data.pagination?.total ?? 0);
       setLibraryTotal(data.totalTracks ?? 0);
       setTotalPages(data.pagination?.totalPages ?? 1);
-      if (data.matchesByTrackId) setMatches(data.matchesByTrackId);
     } catch {
       toast.error("Could not load your library.");
     } finally {
@@ -378,35 +373,6 @@ export default function Home() {
     [selectedTrackIds, loadJobs],
   );
 
-  const checkExistingMaps = useCallback(async () => {
-    if (selectedTrackIds.size === 0) return;
-    setMatching(true);
-    try {
-      const response = await fetch("/api/osu/match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trackIds: [...selectedTrackIds] }),
-      });
-      const data = (await response.json()) as {
-        summary?: { total: number; matchedCount: number; errorCount: number };
-        error?: string;
-      };
-      if (!response.ok) {
-        toast.error(data.error ?? "Existing-map lookup failed.");
-        return;
-      }
-      const summary = data.summary;
-      toast.success(
-        summary
-          ? `${summary.matchedCount} of ${summary.total} already have a Ranked or Loved map.`
-          : "Lookup finished.",
-      );
-      void loadTracks();
-    } finally {
-      setMatching(false);
-    }
-  }, [selectedTrackIds, loadTracks]);
-
   const syncLibrary = useCallback(async () => {
     setBusy(true);
     try {
@@ -443,8 +409,8 @@ export default function Home() {
         <span />
       </div>
       <header className="app__header">
-        <h1 className="app__title">osu-gpt</h1>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <ThemeToggle />
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginLeft: "auto" }}>
           <span className="muted">
             {tracksTotal === libraryTotal
               ? `${libraryTotal} tracks`
@@ -452,13 +418,6 @@ export default function Home() {
           </span>
           <Button variant="ghost" onClick={syncLibrary} disabled={busy}>
             Sync liked songs
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={checkExistingMaps}
-            disabled={matching || selectedTrackIds.size === 0}
-          >
-            {matching ? "Checking..." : "Check existing maps"}
           </Button>
         </div>
       </header>
@@ -534,8 +493,6 @@ export default function Home() {
                   }}
                 >
                   <option value="all">All tracks</option>
-                  <option value="unmatched">No existing map</option>
-                  <option value="matched">Has existing map</option>
                   <option value="generated">Already generated</option>
                 </select>
                 <Button
@@ -575,7 +532,6 @@ export default function Home() {
           >
             <LibraryPane
               tracks={visibleTracks}
-              matches={matches}
               loading={scope === "spotify" ? searching || adding : tracksLoading}
               selectedTrackIds={selectedTrackIds}
               completedTrackIds={completedTrackIds}

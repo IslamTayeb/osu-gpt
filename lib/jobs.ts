@@ -117,6 +117,7 @@ export function createGenerationJob(input: {
   const job: GenerationJob = {
     id: crypto.randomUUID(),
     trackId: input.track.id,
+    trackLabel: `${input.track.artists.join(", ")} — ${input.track.title}`,
     runtime: input.runtime,
     modelVersion: input.modelVersion,
     generatorParams: input.generatorParams,

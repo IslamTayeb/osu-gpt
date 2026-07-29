@@ -2,8 +2,8 @@
 
 Turn your Spotify liked songs into playable osu! beatmaps.
 
-Import your library, check whether a Ranked or Loved map already exists, and
-generate the rest with [Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)
+Import your library, pick songs, and
+generate maps with [Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)
 on a GPU.
 
 ## Setup
@@ -112,9 +112,9 @@ than compression that would squash dynamics. Verified output lands within about
 0.3 LU of target. Both the target and the whole step are configurable in
 settings.
 
-30-second previews come from Deezer (matched by ISRC where available) with
-iTunes as a fallback, and are cached as files — Spotify stopped serving preview
-URLs to new apps in November 2024.
+Previews play the exact cached file that generation maps — same download,
+same normalization — so what you hear is what the model gets, and a previewed
+track generates without a download wait.
 
 ## Generation settings
 

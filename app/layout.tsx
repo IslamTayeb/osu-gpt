@@ -19,7 +19,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    // suppressHydrationWarning: the theme script below sets data-theme before
+    // React hydrates, so the server and client html attributes can differ.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Apply the stored theme before first paint — no flash of dark. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark'){document.documentElement.dataset.theme=t}}catch(e){}",
+          }}
+        />
+      </head>
       <body className={openSans.variable}>
         {children}
         <Toaster />

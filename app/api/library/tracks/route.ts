@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Track, TrackMatchSnapshot } from "@/lib/types";
+import type { Track } from "@/lib/types";
 import { readStore } from "@/lib/store";
 
 export const runtime = "nodejs";
@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 const DEFAULT_PAGE_SIZE = 60;
 const MAX_PAGE_SIZE = 200;
 
-type MatchFilter = "all" | "matched" | "unmatched" | "generated";
+type MatchFilter = "all" | "generated";
 type ProviderFilter = "all" | Track["provider"];
 type SourceFilter = "all" | Track["source"];
 
@@ -31,7 +31,6 @@ function filterTrack(
     source: SourceFilter;
     match: MatchFilter;
   },
-  matchesByTrackId: Record<string, TrackMatchSnapshot>,
   completedTrackIds: Set<string>,
 ) {
   if (filters.provider !== "all" && track.provider !== filters.provider) {
@@ -41,16 +40,6 @@ function filterTrack(
     return false;
   }
 
-  const snapshot = matchesByTrackId[track.id];
-  if (filters.match === "matched" && (!snapshot || snapshot.matches.length === 0)) {
-    return false;
-  }
-  if (
-    filters.match === "unmatched" &&
-    (!snapshot || Boolean(snapshot.error) || snapshot.matches.length > 0)
-  ) {
-    return false;
-  }
   if (filters.match === "generated" && !completedTrackIds.has(track.id)) {
     return false;
   }
@@ -70,7 +59,7 @@ export async function GET(request: NextRequest) {
 
   const page = toPositiveInt(params.get("page"), 1);
   const pageSize = Math.min(MAX_PAGE_SIZE, toPositiveInt(params.get("pageSize"), DEFAULT_PAGE_SIZE));
-  const query = normalizeQuery(params.get("query"));
+  const query = normalizeQuery(params.get("q") ?? params.get("query"));
   const provider = (params.get("provider") ?? "all") as ProviderFilter;
   const source = (params.get("source") ?? "all") as SourceFilter;
   const match = (params.get("match") ?? "all") as MatchFilter;
@@ -80,7 +69,7 @@ export async function GET(request: NextRequest) {
   );
 
   const filteredTracks = store.tracks.filter((track) =>
-    filterTrack(track, { query, provider, source, match }, store.matchesByTrackId, completedTrackIds),
+    filterTrack(track, { query, provider, source, match }, completedTrackIds),
   );
 
   const total = filteredTracks.length;
@@ -89,17 +78,8 @@ export async function GET(request: NextRequest) {
   const start = (safePage - 1) * pageSize;
   const tracks = filteredTracks.slice(start, start + pageSize);
 
-  const pageMatchesByTrackId: Record<string, TrackMatchSnapshot> = {};
-  for (const track of tracks) {
-    const snapshot = store.matchesByTrackId[track.id];
-    if (snapshot) {
-      pageMatchesByTrackId[track.id] = snapshot;
-    }
-  }
-
   return NextResponse.json({
     tracks,
-    matchesByTrackId: pageMatchesByTrackId,
     totalTracks: store.tracks.length,
     pagination: {
       page: safePage,

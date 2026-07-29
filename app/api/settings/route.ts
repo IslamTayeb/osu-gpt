@@ -17,8 +17,6 @@ const WRITABLE_KEYS: (keyof AppSettings)[] = [
   "exportDir",
   "loudnormEnabled",
   "loudnormTargetLufs",
-  "prefetchPreviews",
-  "maxConcurrentJobs",
   "modelVersion",
   "experimentalCompile",
   "generationDefaults",

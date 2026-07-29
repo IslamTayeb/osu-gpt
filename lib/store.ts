@@ -16,8 +16,6 @@ export const defaultSettings: AppSettings = {
   exportDir: null,
   loudnormEnabled: true,
   loudnormTargetLufs: -14,
-  prefetchPreviews: false,
-  maxConcurrentJobs: 4,
   modelVersion: "v32",
   experimentalCompile: false,
 };
@@ -26,7 +24,6 @@ const defaultStore: AppStore = {
   settings: defaultSettings,
   tracks: [],
   jobs: [],
-  matchesByTrackId: {},
 };
 
 function ensureStoreFile() {
@@ -43,9 +40,9 @@ export function readStore(): AppStore {
   const parsed = JSON.parse(fs.readFileSync(dbPath, "utf8")) as Partial<AppStore>;
   return {
     settings: { ...defaultSettings, ...(parsed.settings ?? {}) },
+    spotifyRefreshToken: parsed.spotifyRefreshToken,
     tracks: parsed.tracks ?? [],
     jobs: parsed.jobs ?? [],
-    matchesByTrackId: parsed.matchesByTrackId ?? {},
   };
 }
 
