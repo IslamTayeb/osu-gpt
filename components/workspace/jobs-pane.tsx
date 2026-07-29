@@ -46,8 +46,22 @@ export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }
   const [openJobId, setOpenJobId] = useState<string | null>(null);
   const now = useNow(jobs.some(isActive));
 
+  const head = (
+    <div className="section__head">
+      <h2 className="section__title">Jobs</h2>
+      <Button variant="ghost" onClick={onClearHistory}>
+        Clear finished
+      </Button>
+    </div>
+  );
+
   if (jobs.length === 0) {
-    return <p className="muted">No generation jobs yet.</p>;
+    return (
+      <>
+        {head}
+        <p className="muted">No generation jobs yet.</p>
+      </>
+    );
   }
 
   // Jobs that rode in one Slurm batch share a slurmJobId; group them so the
@@ -129,11 +143,7 @@ export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.5rem" }}>
-        <Button variant="ghost" onClick={onClearHistory}>
-          Clear finished
-        </Button>
-      </div>
+      {head}
       {groups.map((group) => {
         const [first] = group;
         if (group.length === 1) return renderJob(first, false);

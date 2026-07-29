@@ -569,7 +569,6 @@ export default function Home() {
               />
             ) : null}
             <section className="section">
-              <h2 className="section__title">Jobs</h2>
               <JobsPane
                 jobs={jobs}
                 tracksById={tracksById}
