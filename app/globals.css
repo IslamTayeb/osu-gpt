@@ -447,6 +447,27 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
 }
 .banner[data-tone="error"] { border-left-color: var(--danger); }
 
+/* Toasts are banners that float: same surface, hairline, accent edge. */
+.toast {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 260px;
+  max-width: 360px;
+  padding: 0.6rem 0.8rem;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  font-family: var(--font-open-sans), Arial, sans-serif;
+  font-size: var(--text-body);
+}
+.toast--error { border-left-color: var(--danger); }
+.toast--success { border-left-color: var(--ok); }
+.toast__title { font-weight: 600; }
+.toast__description { color: var(--muted-fg); }
+
 .center-card { max-width: 520px; margin: 3rem auto; padding: 0 1.25rem; }
 
 .ui-badge {
