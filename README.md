@@ -101,7 +101,7 @@ then checked against the Spotify duration (±10 s) so a wrong search result is
 rejected rather than mapped.
 
 Loudness is then normalized with a two-pass ffmpeg `loudnorm` to **-9 LUFS
-integrated, -1.5 dBTP true peak**, at 44.1 kHz / 192 kbps. -9 matches what
+integrated, -0.5 dBTP true peak**, at 44.1 kHz / 192 kbps. -9 matches what
 typical osu! maps actually ship (raw commercial masters), so generated maps sit
 at the same volume as the rest of a library — an earlier -14 target made every
 generated map noticeably quieter than its neighbours. Measured across this

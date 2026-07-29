@@ -104,7 +104,7 @@ function parseLoudnormJson(output: string) {
 
 async function measureLoudness(file: string, targetLufs: number) {
   const output = await run(tool("ffmpeg"), [
-    "-i", file, "-af", `loudnorm=I=${targetLufs}:TP=-1.5:LRA=11:print_format=json`,
+    "-i", file, "-af", `loudnorm=I=${targetLufs}:TP=-0.5:LRA=11:print_format=json`,
     "-f", "null", "-",
   ]);
   return parseLoudnormJson(output);
@@ -122,7 +122,7 @@ export async function normalizeLoudness(
 ): Promise<{ before: number; after: number }> {
   const measured = await measureLoudness(source, targetLufs);
   const filter =
-    `loudnorm=I=${targetLufs}:TP=-1.5:LRA=11` +
+    `loudnorm=I=${targetLufs}:TP=-0.5:LRA=11` +
     `:measured_I=${measured.input_i}:measured_TP=${measured.input_tp}` +
     `:measured_LRA=${measured.input_lra}:measured_thresh=${measured.input_thresh}` +
     `:offset=${measured.target_offset}:linear=true`;
