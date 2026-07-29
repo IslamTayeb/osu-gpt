@@ -405,6 +405,14 @@ a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; 
   color: var(--muted-fg);
 }
 .job-batch .job:last-child { border-bottom: none; padding-bottom: 0.2rem; }
+
+.job__elapsed {
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-fg);
+  white-space: nowrap;
+}
 .job__status {
   font-family: var(--mono);
   font-size: var(--text-label);

@@ -4,6 +4,36 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { GenerationJob, Track } from "@/lib/types";
 
+/** "41s", "2m 41s", "1h 12m" — wall-clock granularity for a timer, not an estimate. */
+function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+const isActive = (job: GenerationJob) => job.status === "queued" || job.status === "running";
+
+function jobSpan(job: GenerationJob, now: number) {
+  const start = Date.parse(job.startedAt ?? job.createdAt);
+  const end = job.finishedAt ? Date.parse(job.finishedAt) : now;
+  return { start, end };
+}
+
+/** Ticks once a second while anything is live so elapsed readouts move. */
+function useNow(live: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
+  return now;
+}
+
 type Props = {
   jobs: GenerationJob[];
   tracksById: Record<string, Track>;
@@ -14,6 +44,7 @@ type Props = {
 
 export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }: Props) {
   const [openJobId, setOpenJobId] = useState<string | null>(null);
+  const now = useNow(jobs.some(isActive));
 
   if (jobs.length === 0) {
     return <p className="muted">No generation jobs yet.</p>;
@@ -36,7 +67,8 @@ export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }
 
   const renderJob = (job: GenerationJob, grouped: boolean) => {
     const track = tracksById[job.trackId];
-    const active = job.status === "queued" || job.status === "running";
+    const active = isActive(job);
+    const span = jobSpan(job, now);
     return (
           <div key={job.id} className="job">
             <div style={{ display: "flex", alignItems: "baseline", gap: "0.5rem" }}>
@@ -46,6 +78,7 @@ export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }
               <span style={{ flex: 1, minWidth: 0 }}>
                 {job.trackLabel ?? (track ? `${track.artists.join(", ")} — ${track.title}` : job.trackId)}
               </span>
+              <span className="job__elapsed">{formatElapsed(span.end - span.start)}</span>
               <span className="ui-badge">{job.modelVersion}</span>
             </div>
 
@@ -101,11 +134,14 @@ export function JobsPane({ jobs, tracksById, onRetry, onCancel, onClearHistory }
       {groups.map((group) => {
         const [first] = group;
         if (group.length === 1) return renderJob(first, false);
+        const spans = group.map((job) => jobSpan(job, now));
+        const batchStart = Math.min(...spans.map((s) => s.start));
+        const batchEnd = group.some(isActive) ? now : Math.max(...spans.map((s) => s.end));
         return (
           <div key={first.dcc?.slurmJobId ?? first.id} className="job-batch">
             <p className="job-batch__title">
               Batch of {group.length} — Slurm {first.dcc?.slurmJobId} on {first.dcc?.gres} (
-              {first.dcc?.partition})
+              {first.dcc?.partition}) · {formatElapsed(batchEnd - batchStart)}
               {first.dcc?.statusReason ? ` — ${first.dcc.statusReason}` : ""}
             </p>
             {group.map((job) => renderJob(job, true))}
