@@ -57,20 +57,21 @@ about 5 hours on a 2080 against 1¼ hours on bf16 — so switch when queueing a 
 5000 Ada is excluded from automatic selection entirely: it is the best card on
 paper and the worst in practice.
 
-Cluster paths live in `config/mapperatorinator.pin.json`. One-time setup:
+The tracked `config/mapperatorinator.pin.json` pins only the model repo and
+commit. Your own cluster identity — SSH host alias, Slurm account, paths — goes
+in `config/dcc.local.json` (untracked; copy `dcc.local.example.json`). One-time
+setup, with `$ENV`, `$REPO` and `$WORK` matching what you put there:
 
 ```bash
-ssh dcc
-ENV=/hpc/group/GROUP/NETID/envs/mapperatorinator
-REPO=/hpc/group/GROUP/NETID/projects/Mapperatorinator
-git -C $REPO fetch origin && git -C $REPO reset --hard origin/osu-gpt/batch-driver
+ssh <your-cluster>
+git -C $REPO fetch origin && git -C $REPO reset --hard <pinned sha>
 $ENV/bin/pip install -r $REPO/requirements.txt
-mkdir -p /work/NETID/osu-gpt/jobs
+mkdir -p $WORK/jobs
 ```
 
-Model weights are cached at `/work/NETID/Mapperatorinator/cache/huggingface`.
-Pre-warm them from the login node (compute nodes may lack internet), and note
-that `/work` purges files untouched for 75 days.
+Model weights cache under the `hfHome` you configured. Pre-warm them from the
+login node (compute nodes may lack internet); on Duke's DCC, note that `/work`
+purges files untouched for 75 days.
 
 **This machine.** Runs `inference.py` locally, one job at a time.
 

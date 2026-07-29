@@ -5,23 +5,42 @@ import path from "node:path";
  * Pure config + parsing helpers, kept free of job/runtime imports so the status
  * route can use them without pulling in the whole runtime graph.
  */
+export type DccConfig = {
+  sshHost: string;
+  account: string;
+  repo: string;
+  env: string;
+  hfHome: string;
+  workDir: string;
+};
+
 export type Pin = {
   branch: string;
   sha: string;
-  dcc: {
-    sshHost: string;
-    account: string;
-    repo: string;
-    env: string;
-    hfHome: string;
-    workDir: string;
-  };
+  dcc: DccConfig;
 };
 
+/**
+ * The tracked pin holds only the public model contract (repo/branch/sha).
+ * Cluster identity — SSH host alias, Slurm account, personal paths — lives in
+ * untracked config/dcc.local.json so cloning the repo shares no part of one
+ * person's cluster setup. Copy dcc.local.example.json to start your own.
+ */
 export function loadPin(): Pin {
-  return JSON.parse(
-    fs.readFileSync(path.join(process.cwd(), "config", "mapperatorinator.pin.json"), "utf8"),
-  ) as Pin;
+  const configDir = path.join(process.cwd(), "config");
+  const pin = JSON.parse(
+    fs.readFileSync(path.join(configDir, "mapperatorinator.pin.json"), "utf8"),
+  ) as Omit<Pin, "dcc">;
+
+  const localPath = path.join(configDir, "dcc.local.json");
+  if (!fs.existsSync(localPath)) {
+    throw new Error(
+      "Cluster runtime is not configured: copy config/dcc.local.example.json to " +
+        "config/dcc.local.json and fill in your own SSH host and paths.",
+    );
+  }
+  const dcc = JSON.parse(fs.readFileSync(localPath, "utf8")) as DccConfig;
+  return { ...pin, dcc };
 }
 
 /**

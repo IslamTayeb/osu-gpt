@@ -1,0 +1,8 @@
+{
+  "sshHost": "your-cluster-ssh-alias",
+  "account": "your-slurm-account",
+  "repo": "/path/on/cluster/to/Mapperatorinator",
+  "env": "/path/on/cluster/to/conda-env",
+  "hfHome": "/path/on/cluster/to/huggingface-cache",
+  "workDir": "/path/on/cluster/to/job-workdir"
+}

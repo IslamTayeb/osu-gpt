@@ -46,7 +46,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ profiles: cached.value, cached: true });
   }
 
-  const pin = loadPin();
+  let pin: ReturnType<typeof loadPin>;
+  try {
+    pin = loadPin();
+  } catch (error) {
+    // Most likely a fresh clone without config/dcc.local.json.
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Cluster config missing." },
+      { status: 503 },
+    );
+  }
   const probes = Object.values(GPU_PROFILES).map((profile) => {
     const target = profile.targets[0];
     return (

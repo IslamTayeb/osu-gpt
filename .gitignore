@@ -43,3 +43,6 @@ next-env.d.ts
 
 # project-local python tooling
 /.venv
+
+# personal cluster identity (ssh alias, slurm account, paths)
+/config/dcc.local.json

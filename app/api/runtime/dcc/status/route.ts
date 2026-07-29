@@ -36,7 +36,16 @@ export async function GET() {
     return NextResponse.json(cached.value);
   }
 
-  const pin = loadPin();
+  let pin: ReturnType<typeof loadPin>;
+  try {
+    pin = loadPin();
+  } catch (error) {
+    // Most likely a fresh clone without config/dcc.local.json.
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Cluster config missing." },
+      { status: 503 },
+    );
+  }
   const expected = pin.sha;
   const localActual = await localHead();
 
