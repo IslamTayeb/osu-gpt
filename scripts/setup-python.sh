@@ -9,7 +9,9 @@ venv="$here/.venv"
 python="${PYTHON_BIN:-python3}"
 
 echo "==> Creating $venv with $($python -V)"
-"$python" -m venv "$venv"
+# --copies: symlinked python binaries point outside the project root, which
+# kills `next build` (Turbopack refuses to trace a symlink escaping its root).
+"$python" -m venv --copies "$venv"
 "$venv/bin/python" -m pip install --quiet --upgrade pip
 "$venv/bin/python" -m pip install --quiet --upgrade spotdl yt-dlp
 
